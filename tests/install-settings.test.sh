@@ -14,6 +14,7 @@ check "dry-run writes no backup" test -z "$(ls "$tmp" | grep bak)"
 check "keeps unrelated keys" test "$(jq -c '[.model, .env.KEEP, .hooks]' <<<"$out")" = '["opus","1",{"Stop":[]}]'
 check "recommended values win" test "$(jq -r .env.CLAUDE_CODE_SUBAGENT_MODEL <<<"$out")" = sonnet
 check "adds compaction and workflow keys" test "$(jq -c '[.autoCompactWindow, .workflowSizeGuideline]' <<<"$out")" = '[400000,"medium"]'
+check "sets Max-plan defaults: effort, fallback model, transcript retention" test "$(jq -c '[.effortLevel, .fallbackModel, .cleanupPeriodDays]' <<<"$out")" = '["high",["sonnet"],90]'
 check "caps inline Bash output and sets cache TTLs" test "$(jq -c '[.bashOutputMaxChars, .promptCacheTtl, .subagentPromptCacheTtl]' <<<"$out")" = '[12000,"1h","5m"]'
 check "does not add the Devin rule by default" test "$(jq -c .permissions.allow <<<"$out")" = '["Bash(ls:*)"]'
 check "keeps the deny list" test "$(jq -c .permissions.deny <<<"$out")" = '["Bash(rm:*)"]'
@@ -56,9 +57,9 @@ printf '# My rules\n\nKeep answers short.\n' > "$d/CLAUDE.md"; cp "$d/CLAUDE.md"
 bash "$I" --target "$d/settings.json" >/dev/null
 check "keeps the user's own CLAUDE.md text first" test "$(head -n 3 "$d/CLAUDE.md")" = "$(cat "$d/mine.md")"
 check "backs up an existing CLAUDE.md" cmp -s "$d/mine.md" "$(ls "$d"/CLAUDE.md.bak-sdd-orca-* | head -1)"
-bash "$I" --target "$d/settings.json" >/dev/null
-bash "$I" --target "$d/settings.json" >/dev/null
-check "backups made within the same second never overwrite each other" test "$(ls "$d"/settings.json.bak-sdd-orca-* | wc -l)" -ge 3
+n0=$(ls "$d"/settings.json.bak-sdd-orca-* 2>/dev/null | wc -l)
+for i in 1 2 3; do jq ".bashOutputMaxChars = $i" "$d/settings.json" > "$d/t.json" && mv "$d/t.json" "$d/settings.json"; bash "$I" --target "$d/settings.json" >/dev/null; done
+check "backups made within the same second never overwrite each other" test "$(ls "$d"/settings.json.bak-sdd-orca-* | wc -l)" = "$((n0 + 3))"
 check "reinstalling keeps exactly one block" test "$(grep -cxF "$B" "$d/CLAUDE.md")" = 1
 printf '%s\n' "# My rules" "" "Keep answers short." "" "$B" "old rule text" "$E" "" "Trailing note." > "$d/CLAUDE.md"
 bash "$I" --target "$d/settings.json" >/dev/null

@@ -52,6 +52,9 @@ The merge (`settings/recommended.json`) sets these values and keeps everything e
 | `CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS` | `4` | bound parallel agents (and rate-limit bursts) |
 | `bashOutputMaxChars` | `12000` | inline Bash output limit (default 30000). Longer output is saved to a file; Claude receives a preview and the path. |
 | `promptCacheTtl` | `"1h"` | keep the main conversation's cache warm across breaks. Already the automatic choice on a Claude subscription. On API-key billing, 1-hour cache writes cost 2× input. |
+| `effortLevel` | `"high"` | thinking is output tokens, the most expensive kind; switch to `/effort xhigh` only for a hard design or debugging session |
+| `fallbackModel` | `["sonnet"]` | keep working on Sonnet when the primary model is overloaded or unavailable |
+| `cleanupPeriodDays` | `90` | keep transcripts long enough to re-measure with `tools/usage` (default 30) |
 | `subagentPromptCacheTtl` | `"5m"` | short-lived subagents and workflow agents rarely outlive 5 minutes, so pay only for 5-minute cache writes |
 
 The recommended settings grant no permissions. The Devin allow rule is a separate opt-in: `--with-devin` (see below).
@@ -169,7 +172,7 @@ bash tests/run.sh
   - the STATUS contract;
   - non-zero exit, timeout, `RUNNING`, and `stop` killing the whole session.
 - **`tests/hooks.test.sh`** covers the redirect hook (deny shape, pass-through cases, fail-open, `SDD_MANUAL=1`) and the SessionStart output.
-- **`tests/install-settings.test.sh`** (37 checks) covers:
+- **`tests/install-settings.test.sh`** (38 checks) covers:
   - merge semantics;
   - no permissions by default;
   - the opt-in allow-list union;
@@ -236,6 +239,9 @@ Workflow đưa vòng lặp ra khỏi session dài. Mỗi agent bắt đầu vớ
 - `bashOutputMaxChars: 12000`: output Bash quá 12k ký tự được lưu ra file; Claude chỉ nhận đoạn xem trước kèm đường dẫn.
 - `promptCacheTtl: "1h"`: cache của session chính.
 - `subagentPromptCacheTtl: "5m"`: cache của subagent và workflow.
+- `effortLevel: "high"`: chỉ bật `/effort xhigh` khi cần thiết kế hoặc debug khó.
+- `fallbackModel: ["sonnet"]`: chuyển sang Sonnet khi Opus quá tải.
+- `cleanupPeriodDays: 90`: giữ transcript đủ lâu để đo lại usage.
 
 **Devin:**
 - Yêu cầu rõ "chạy plan bằng Devin".
