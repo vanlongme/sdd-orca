@@ -61,7 +61,7 @@ The recommended settings grant no permissions. The Devin allow rule is a separat
 
 ### CLAUDE.md rules
 
-`settings/CLAUDE.md` holds a short block of rules (~390 words, ~500 tokens per session). The installer puts it into `~/.claude/CLAUDE.md` between `<!-- sdd-orca:begin -->` and `<!-- sdd-orca:end -->` markers:
+`settings/CLAUDE.md` holds a short block of rules (~430 words, ~560 tokens per session). The installer puts it into `~/.claude/CLAUDE.md` between `<!-- sdd-orca:begin -->` and `<!-- sdd-orca:end -->` markers:
 
 - **The first time,** it appends the block.
 - **On reinstall,** it replaces the block in place and keeps the rest of your file.
@@ -72,6 +72,7 @@ The rules address the habits that cost the most in the measurements above:
 
 - **Polling.** Run long commands with `run_in_background` and act on the completion notification. Wait for a condition with Monitor (or a background Bash) running an `until` loop that also matches failure states. Watch event streams with a filtered Monitor. Never loop `sleep` plus status checks.
 - **Searching.** Find files with `rg --files -g`, find content with `rg -n -S` (`-l`, `-m`, `-g`/`-t`), and read only the line ranges you need with `sed -n`. Fall back to `grep -rn`, and hand broad searches to an Explore subagent. The workflow agents get the same recipe in their prompts.
+- **Subagent models.** The built-in Explore and Plan agents declare `model: inherit`. They run on your main model (Opus) even with `CLAUDE_CODE_SUBAGENT_MODEL=sonnet`, because that variable is only the default for agents that declare no model. The rule tells Claude to pass `model: "sonnet"` when it spawns them.
 - **Long command output in context.** Ask commands for quiet or filtered output. Send builds, tests and logs to a file and print only the exit code and failing lines. Hand wide reads to a subagent.
 
 Requirements:
@@ -173,7 +174,7 @@ bash tests/run.sh
   - the STATUS contract;
   - non-zero exit, timeout, `RUNNING`, and `stop` killing the whole session.
 - **`tests/hooks.test.sh`** covers the redirect hook (deny shape, pass-through cases, fail-open, `SDD_MANUAL=1`) and the SessionStart output.
-- **`tests/install-settings.test.sh`** (40 checks) covers:
+- **`tests/install-settings.test.sh`** (41 checks) covers:
   - merge semantics;
   - no permissions by default;
   - the opt-in allow-list union;
@@ -236,6 +237,7 @@ Workflow đưa vòng lặp ra khỏi session dài. Mỗi agent bắt đầu vớ
    - chờ điều kiện bằng Monitor với vòng `until`, bắt cả trạng thái lỗi, thay cho `sleep`;
    - không đổ output dài vào context;
    - tìm file bằng `rg --files -g`, tìm nội dung bằng `rg -n -S` (dùng `-l`, `-m`, `-g`), đọc đúng khoảng dòng bằng `sed -n`; dùng `grep -rn` khi không có rg; giao các tìm kiếm rộng cho subagent Explore.
+   - khi gọi Explore hoặc Plan, luôn truyền `model: "sonnet"`: hai agent built-in này khai báo `model: inherit` nên mặc định chạy model của phiên chính (Opus), bỏ qua `CLAUDE_CODE_SUBAGENT_MODEL`.
 
 **Settings mới thêm:**
 - `bashOutputMaxChars: 12000`: output Bash quá 12k ký tự được lưu ra file; Claude chỉ nhận đoạn xem trước kèm đường dẫn.

@@ -52,6 +52,7 @@ check "the block recommends Monitor with an until condition instead of sleep" ba
 check "the block asks watches to cover failure states" grep -qi "fail" "$d/CLAUDE.md"
 check "the block teaches rg for files and content, with a grep fallback" bash -c 'grep -q "rg --files" "$1" && grep -q "rg -n" "$1" && grep -q "grep -rn" "$1"' _ "$d/CLAUDE.md"
 check "the block teaches reading line ranges" grep -q "sed -n" "$d/CLAUDE.md"
+check "the block pins Explore and Plan to an explicit model" bash -c 'grep -q "Explore" "$1" && grep -q "model: \"sonnet\"" "$1" && grep -q "inherit" "$1"' _ "$d/CLAUDE.md"
 check "the block carries the long-output rule" grep -q "bashOutputMaxChars\|long output\|Command output" "$d/CLAUDE.md"
 check "the block matches settings/CLAUDE.md" bash -c 'diff <(sed -n "/^<!-- sdd-orca:begin -->$/,/^<!-- sdd-orca:end -->$/p" "$1") "$2" >/dev/null' _ "$d/CLAUDE.md" "$here/../settings/CLAUDE.md"
 

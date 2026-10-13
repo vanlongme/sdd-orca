@@ -16,6 +16,8 @@ Subagents and workflows notify you when they finish; wait for that.
 - Files: `rg --files -g '<glob>'`. Content: `rg -n -S 'pattern' -g '<glob>'`, adding `-l` for file names only, `-m 5` to cap matches per file, `--max-columns 200` and `| head -50`. Without rg, use `grep -rnE --include='<glob>'`.
 - Read only the lines you need, with `sed -n '120,180p' <file>` or Read offset/limit. Hand a search that takes more than about three rounds to an Explore subagent.
 
+**Subagent models.** The built-in Explore and Plan agents declare `model: inherit`, so they run on your model and ignore `CLAUDE_CODE_SUBAGENT_MODEL`. Pass `model: "sonnet"` whenever you spawn them. Other agents without a model already default to Sonnet; pass `"opus"` only for work that needs deep reasoning.
+
 **Command output:** ask commands for only what you need, for example:
 - `-q`/`--quiet`;
 - `--json` with a `jq` filter;
