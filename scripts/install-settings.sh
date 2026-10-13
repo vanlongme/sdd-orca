@@ -98,9 +98,13 @@ if [ "$dry" = 1 ]; then
 fi
 
 mkdir -p "$(dirname "$target")"
-[ -f "$target" ] && backup "$target"
-write "$target" "$merged"
-echo "updated: $target"
+if [ -f "$target" ] && [ "$(jq -S . "$target")" = "$(jq -S . <<<"$merged")" ]; then
+  echo "unchanged: $target"
+else
+  [ -f "$target" ] && backup "$target"
+  write "$target" "$merged"
+  echo "updated: $target"
+fi
 if [ "$devin" = true ]; then
   echo "added Bash(sdd-devin:*): agents can now start Devin without asking you. Remove the rule when you stop running Devin plans."
 fi

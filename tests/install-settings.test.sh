@@ -27,6 +27,9 @@ check "--with-devin works without an existing allow list" test "$(jq -c .permiss
 bash "$I" --target "$tmp/s.json" --with-devin >/dev/null
 check "writes a backup of the original" cmp -s "$tmp/orig.json" "$(ls "$tmp"/s.json.bak-sdd-orca-* | head -1)"
 bash "$I" --target "$tmp/s.json" --with-devin >/dev/null
+n_before=$(ls "$tmp"/s.json.bak-sdd-orca-* | wc -l)
+out=$(bash "$I" --target "$tmp/s.json" --with-devin)
+check "an unchanged settings file is neither rewritten nor backed up" test "$(ls "$tmp"/s.json.bak-sdd-orca-* | wc -l)" = "$n_before" -a -n "$(grep "unchanged: $tmp/s.json" <<<"$out")"
 check "is idempotent" test "$(jq -c .permissions.allow "$tmp/s.json")" = '["Bash(ls:*)","Bash(sdd-devin:*)"]'
 echo '[1]' > "$tmp/bad.json"
 check "refuses a non-object target" test "$(bash "$I" --target "$tmp/bad.json" >/dev/null 2>&1; echo $?)" = 2

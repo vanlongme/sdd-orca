@@ -169,7 +169,7 @@ bash tests/run.sh
   - the STATUS contract;
   - non-zero exit, timeout, `RUNNING`, and `stop` killing the whole session.
 - **`tests/hooks.test.sh`** covers the redirect hook (deny shape, pass-through cases, fail-open, `SDD_MANUAL=1`) and the SessionStart output.
-- **`tests/install-settings.test.sh`** (36 checks) covers:
+- **`tests/install-settings.test.sh`** (37 checks) covers:
   - merge semantics;
   - no permissions by default;
   - the opt-in allow-list union;
