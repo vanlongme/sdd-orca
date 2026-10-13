@@ -4,7 +4,7 @@ export const meta = {
   whenToUse: 'Called by the sdd-orca:subagent-driven-development skill. args: {plan: "<plan .md>", base?: "main", cwd?: "<worktree path>", spec?: "<spec .md>", verify?: "make check", implementer?: "claude"|"devin", implModel?: "auto"|"haiku"|"sonnet"|"opus", only?: [2, 3], from?: 3, maxFixRounds?: 3, fixFinal?: true, sddDir?: "<skill dir>"}. Tasks run sequentially on the current branch, each committed, never pushed.',
   phases: [
     { title: 'Preflight', detail: 'workspace + ledger, task list + tiers, conflict scan, per-task briefs (opus, medium)' },
-    { title: 'Implement', detail: 'tiered implementer (haiku / sonnet / opus) or Devin CLI; the last fix round goes one tier up' },
+    { title: 'Implement', detail: 'tiered implementer (haiku / sonnet; design tasks on sonnet at high effort) or Devin CLI; escalations and the last fix round go one tier up, to opus at most' },
     { title: 'Review', detail: 'task review for spec + quality (sonnet; opus for design tasks), scoped re-reviews' },
     { title: 'Adjudicate', detail: 'resolve NEEDS_CONTEXT/BLOCKED and findings still open at the cap (opus)' },
     { title: 'Final', detail: 'whole-branch review (opus, high) + one fix wave + one re-review' },
@@ -55,7 +55,9 @@ const ask = (prompt, opts) => agent(ROLE + WHERE + prompt, opts)
 
 const RULES = 'Rules: stay on the current branch; never push, rebase, reset --hard, amend, or force anything. Never run docker/system prune or other host cleanup; if disk or resources run short, report BLOCKED with that reason. Never dispatch subagents. Run the focused tests for your change; one full verification runs at the end of the plan.'
 const MARK = ref => `Bookkeeping exception to read-only: first run \`git update-ref ${ref} HEAD\`. It is a private ref the workflow uses to name this commit range; it moves no branch and not HEAD.`
-const TIER_MODEL = { transcribe: 'haiku', integrate: 'sonnet', design: 'opus' }
+// Design tasks run on Sonnet at high effort; Opus is reserved for escalations, the last fix round and the judgment roles.
+const TIER_MODEL = { transcribe: 'haiku', integrate: 'sonnet', design: 'sonnet' }
+const TIER_EFFORT = { transcribe: 'medium', integrate: 'medium', design: 'high' }
 const UP = { haiku: 'sonnet', sonnet: 'opus', opus: 'opus' }
 
 const PREFLIGHT = {
@@ -206,7 +208,7 @@ const implement = (t, model, extra) => ask(
 - Work from the repository root on the current branch. Global constraints are in ${CONSTRAINTS}.
 ${carried.length ? `- Rulings from earlier tasks that bind you:\n${carried.map(r => `  - ${r}`).join('\n')}\n` : ''}${extra ? `${extra}\n` : ''}You cannot ask questions mid-task: when you need information, stop and return NEEDS_CONTEXT with the question; return BLOCKED when you cannot finish. Report how many commits you created.
 ${RULES}`,
-  { label: `impl:${t.n}${extra ? '+' : ''}`, phase: 'Implement', model, effort: 'medium', schema: IMPL })
+  { label: `impl:${t.n}${extra ? '+' : ''}`, phase: 'Implement', model, effort: TIER_EFFORT[t.tier] || 'medium', schema: IMPL })
 
 // Devin CLI driven through the plugin's sdd-devin wrapper by a small Claude agent; the wrapper composes Devin's prompt.
 const useDevin = (t, escalated) => DEVIN && t.tier !== 'design' && !escalated
@@ -315,7 +317,7 @@ Read the brief ${t.brief} and the report ${WS}/task-${t.n}-report.md (the task's
 ${listIssues(open)}
 Fix them, re-run the tests covering the amended code, append a fix report (what changed, the covering tests, the command, its output) to the report file, and commit any code change. Report how many commits you created (0 if the fix needed no code change).
 ${RULES}`,
-      { label: `fix:${t.n}#${rounds}`, phase: 'Implement', model: fixModel, effort: 'medium', schema: IMPL })
+      { label: `fix:${t.n}#${rounds}`, phase: 'Implement', model: fixModel, effort: TIER_EFFORT[t.tier] || 'medium', schema: IMPL })
     if (!fixed || !['DONE', 'DONE_WITH_CONCERNS'].includes(fixed.status)) {
       lines.push(`Task ${t.n}: fix round ${rounds}/${MAX_FIX} produced no fix (${fixed ? fixed.status : 'no result'})`)
       continue

@@ -9,7 +9,7 @@
     {
       "name": "sdd-orca",
       "description": "Token-lean subagent-driven development: superpowers skills fork, sdd-run / review-gate / sweep / verify-facts workflows, optional Devin CLI implementer",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "source": "./",
       "author": {
         "name": "vanlongme",

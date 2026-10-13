@@ -95,7 +95,7 @@ Write a plan with `sdd-orca:writing-plans` and choose **Subagent-driven**, or as
 Inside the workflow, for each task, in order:
 
 - **Preflight.** Conflict scan, task briefs and a ledger in `.superpowers/sdd/<plan>/`.
-- **Implement.** The implementer depends on the task's tier: transcribe → haiku, integrate → sonnet, design → opus. Devin is optional.
+- **Implement.** The implementer depends on the task's tier: transcribe → haiku, integrate → sonnet, design → sonnet at high effort. Opus implements only when a task is escalated (BLOCKED, or the last fix round). Pass `implModel: "opus"` to force it. Devin is optional.
 - **Review.** A spec + quality review (sonnet; opus for design tasks), with commit ranges named by private refs `refs/sdd/<plan>/…`. No SHA ever passes through a model.
 - **Fix.** Up to 3 fix rounds; the last round goes one model tier up.
 - **Adjudicate.** An opus adjudicator decides findings that the plan itself mandates, and findings that hit the round cap. Each decision becomes a `Ruling:` line in the ledger.
@@ -183,7 +183,7 @@ bash tests/run.sh
   - refusing a non-object file;
   - the CLAUDE.md block, which is appended once, replaced in place, keeps the surrounding text, and causes a refusal with unbalanced markers before any file is written.
 - **`tests/brainstorm-server.test.sh`** checks that the brainstorm companion's `/tmp` session directory is random, owner-only and removed on stop.
-- **`tests/sdd-dryrun.mjs`** runs `sdd-run` with every agent mocked: 21 scenarios covering routing, escalation, adjudication, resume, refs, the ledger, the Devin routing and input guards.
+- **`tests/sdd-dryrun.mjs`** runs `sdd-run` with every agent mocked: 22 scenarios covering routing, escalation, adjudication, resume, refs, the ledger, the Devin routing and input guards.
 - **`tests/workflows-dryrun.mjs`** does the same for `review-gate`, `sweep` and `verify-facts`.
 
 The mocks prove the control flow, not model behaviour. `sdd-run` itself was run live twice on a small throwaway plan, with 13 agents per run, a clean ledger and verify passing. The Devin path has been tested only against the fake CLI.
