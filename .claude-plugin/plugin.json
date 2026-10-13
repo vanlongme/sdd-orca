@@ -1,7 +1,7 @@
 {
   "name": "sdd-orca",
   "description": "Token-lean subagent-driven development for Claude Code: a superpowers fork whose plan execution runs as a Workflow (tiered Claude or Devin CLI implementers), plus review-gate, sweep and verify-facts workflows and recommended settings",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": {
     "name": "vanlongme",
     "url": "https://github.com/vanlongme"

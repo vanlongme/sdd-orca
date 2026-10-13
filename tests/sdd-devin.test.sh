@@ -207,4 +207,20 @@ check "SDD_DEVIN_ORCA=1 refuses to run without Orca" test "$(cd "$repo" && SDD_D
 check "an unknown SDD_DEVIN_ORCA value is rejected" test "$(cd "$repo" && SDD_DEVIN_ORCA=yes "$SD" start "${base[@]}" >/dev/null 2>&1; echo $?)" = 2
 rm -f "$FAKE_ORCA_DIR/down"
 
+reset_orca
+# Paths are typed into the Orca tab's interactive shell: control characters (Ctrl-O runs the
+# line in zsh) or shell quoting characters must never reach it.
+for bad in $'ctl\x0fx' 'q$(touch PWNED)x' 'bq`touch PWNED`x' 'bang!x' 'dq"x' 'bs\x'; do
+  wsb="$repo/.superpowers/sdd/$bad"; mkdir -p "$wsb"
+  out=$(cd "$repo" && FAKE_MODE=done "$SD" start --task 1 --brief "$ws/task-1-brief.md" --report "$wsb/r.md" --constraints "$ws/constraints.md" --workspace "$wsb" 2>/dev/null); rc=$?
+  check "workspace $(printf '%q' "$bad") never reaches an Orca shell" bash -c '! grep -q "terminal create" "$1/calls" 2>/dev/null' _ "$FAKE_ORCA_DIR"
+  case "$bad" in
+    *$'\x0f'*) check "a control character in a path is rejected" test "$rc" = 2 ;;
+    *) check "workspace $(printf '%q' "$bad") still runs detached" test "$rc" = 0 -a -z "$(grep WATCH= <<<"$out")" ;;
+  esac
+  j=$(sed -n 's/^JOB=//p' <<<"$out"); [ -z "$j" ] || "$SD" wait "$j" 30 >/dev/null
+  rm -f "$FAKE_ORCA_DIR/calls"
+done
+check "nothing was executed from a path" test ! -e "$repo/PWNED" -a ! -e "$repo/sub/PWNED"
+
 finish

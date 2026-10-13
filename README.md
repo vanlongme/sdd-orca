@@ -114,6 +114,7 @@ Ask for it explicitly, for example "execute this plan with Devin". The run then 
 - **Watching in Orca.** When the [Orca](https://github.com/stablyai/orca) desktop runtime is reachable, each job opens Devin's interactive TUI in an Orca terminal tab of the worktree, titled `sdd task N #k`. You watch it live and can type guidance into it. Without Orca, `devin -p` runs as a detached background job.
 - **How a job ends.** Devin ends the job by writing its `STATUS:` line to `<job>/status`. The wrapper then stops the idle TUI and renames the tab with the outcome; the tab stays open for review. If Devin sits idle with no status, it gets one nudge; if it then stays idle, the job is reported `BLOCKED`.
 - **Repository registration.** The wrapper registers the repository in Orca if Orca does not know it yet.
+- **What reaches the shell.** The only text typed into the tab's shell is `bash '<job>/run.sh'`. Paths containing control characters are rejected outright. Paths containing quote, escape or expansion characters run detached instead.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -142,9 +143,10 @@ Setup: `bash …/scripts/install-settings.sh --with-devin` adds the allow rule `
 bash tests/run.sh
 ```
 
-- **`tests/sdd-devin.test.sh`** (64 checks) runs the wrapper against a fake `devin` and a fake `orca` in a throwaway git repo. It covers:
+- **`tests/sdd-devin.test.sh`** (77 checks) runs the wrapper against a fake `devin` and a fake `orca` in a throwaway git repo. It covers:
   - input validation, and that no environment variable can swap in another executable;
   - Orca mode: repository registration, tab creation, interactive mode, the status file, the nudge, giving up, stop, and the fallback to detached mode;
+  - that no path with control or shell-quoting characters is ever typed into an Orca shell;
   - argv and prompt contents;
   - relative paths;
   - the STATUS contract;

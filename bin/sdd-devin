@@ -27,7 +27,10 @@
 set -euo pipefail
 
 die() { echo "sdd-devin: $*" >&2; exit 2; }
-plain() { case "$1" in *$'\n'*|*$'\r'*|'') return 1 ;; esac; }
+plain() { case "$1" in *[[:cntrl:]]*|'') return 1 ;; esac; }
+# A path that is safe to type, single-quoted, into the Orca tab's interactive shell: no
+# quote, escape, expansion or history characters (control characters never pass plain()).
+typeable() { case "$1" in *[\'\"\\\$\`\!]*) return 1 ;; esac; plain "$1"; }
 abs() { case "$1" in /*) printf '%s' "$1" ;; *) printf '%s/%s' "$PWD" "$1" ;; esac; }
 STATUS_RE='STATUS: *(DONE_WITH_CONCERNS|DONE|BLOCKED|NEEDS_CONTEXT)'
 
@@ -129,7 +132,7 @@ start() {
   if [ "${SDD_DEVIN_SANDBOX:-0}" = 1 ]; then args+=(--sandbox); fi
 
   if [ "$use_orca" = 1 ]; then
-    case "$job" in *"'"*) use_orca=0; echo "sdd-devin: job path contains a quote; running detached" >&2 ;; esac
+    typeable "$job" || { use_orca=0; echo "sdd-devin: the job path has characters unsafe to type into a shell; running detached" >&2; }
   fi
   if [ "$use_orca" = 1 ]; then
     # The tab's shell runs this script. Devin keeps the terminal (timeout --foreground) so
