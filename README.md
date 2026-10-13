@@ -61,7 +61,7 @@ The recommended settings grant no permissions. The Devin allow rule is a separat
 
 ### CLAUDE.md rules
 
-`settings/CLAUDE.md` holds a short block of rules (~450 words, ~600 tokens per session). The installer puts it into `~/.claude/CLAUDE.md` between `<!-- sdd-orca:begin -->` and `<!-- sdd-orca:end -->` markers:
+`settings/CLAUDE.md` holds a short block of rules (~390 words, ~500 tokens per session). The installer puts it into `~/.claude/CLAUDE.md` between `<!-- sdd-orca:begin -->` and `<!-- sdd-orca:end -->` markers:
 
 - **The first time,** it appends the block.
 - **On reinstall,** it replaces the block in place and keeps the rest of your file.

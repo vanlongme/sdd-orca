@@ -12,19 +12,9 @@ Every turn re-reads the whole context, so anything that enters it is paid for ag
 
 Subagents and workflows notify you when they finish; wait for that.
 
-**Searching.** Find first, then read narrowly.
-
-- **Files by name:** `rg --files -g '*auth*'` respects `.gitignore`, so prefer it to `find`. For tracked files only, use `git ls-files '<path>'`.
-- **Content:** `rg -n -S 'pattern' <dir> -g '*.go'`, or `-t go` instead of the glob. Useful flags:
-  - `-l` lists file names only;
-  - `-c` prints counts;
-  - `-m 5` caps matches per file;
-  - `-C 2` adds context lines;
-  - `--max-columns 200` trims minified lines.
-
-  Add `| head -50` when there may be many results. Without rg, use `grep -rnE --include='*.go' 'pattern' <dir>`.
-- **Then read only the lines you need:** `sed -n '120,180p' <file>`, or Read with offset/limit.
-- **Long searches:** when a search takes more than about three rounds, or spans many directories, hand it to an Explore subagent and keep only its conclusion.
+**Searching.** Find first, then read narrowly:
+- Files: `rg --files -g '<glob>'`. Content: `rg -n -S 'pattern' -g '<glob>'`, adding `-l` for file names only, `-m 5` to cap matches per file, `--max-columns 200` and `| head -50`. Without rg, use `grep -rnE --include='<glob>'`.
+- Read only the lines you need, with `sed -n '120,180p' <file>` or Read offset/limit. Hand a search that takes more than about three rounds to an Explore subagent.
 
 **Command output:** ask commands for only what you need, for example:
 - `-q`/`--quiet`;
