@@ -41,7 +41,7 @@ bash ~/.claude/plugins/marketplaces/sdd-orca/scripts/install-settings.sh --dry-r
 bash ~/.claude/plugins/marketplaces/sdd-orca/scripts/install-settings.sh
 ```
 
-The merge (`settings/recommended.json`) sets these values and keeps everything else:
+The merge (`settings/recommended.json`) sets these values and keeps everything else. The installer also adds the context-hygiene rules to `~/.claude/CLAUDE.md` (see below).
 
 | Setting | Value | Why |
 |---|---|---|
@@ -50,8 +50,25 @@ The merge (`settings/recommended.json`) sets these values and keeps everything e
 | `CLAUDE_CODE_SUBAGENT_MODEL` | `sonnet` | default subagent model; workflows still pick per step |
 | `ANTHROPIC_DEFAULT_SONNET_MODEL` / `..._HAIKU_MODEL` | `claude-sonnet-5-5` / `claude-haiku-5-5` | pin the aliases the workflows use |
 | `CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS` | `4` | bound parallel agents (and rate-limit bursts) |
+| `bashOutputMaxChars` | `12000` | inline Bash output limit (default 30000). Longer output is saved to a file; Claude receives a preview and the path. |
+| `promptCacheTtl` | `"1h"` | keep the main conversation's cache warm across breaks. Already the automatic choice on a Claude subscription. On API-key billing, 1-hour cache writes cost 2× input. |
+| `subagentPromptCacheTtl` | `"5m"` | short-lived subagents and workflow agents rarely outlive 5 minutes, so pay only for 5-minute cache writes |
 
 The recommended settings grant no permissions. The Devin allow rule is a separate opt-in: `--with-devin` (see below).
+
+### CLAUDE.md rules
+
+`settings/CLAUDE.md` holds a short block of rules (~200 words). The installer puts it into `~/.claude/CLAUDE.md` between `<!-- sdd-orca:begin -->` and `<!-- sdd-orca:end -->` markers:
+
+- **The first time,** it appends the block.
+- **On reinstall,** it replaces the block in place and keeps the rest of your file.
+- **Before changing the file,** it makes a backup.
+- **With `--no-claude-md`,** it leaves the file alone.
+
+The rules address the two habits that cost the most in the measurements above:
+
+- **Polling.** Wait for completion notifications instead of looping `sleep` and status checks. For external state, make one blocking call or schedule one wake-up.
+- **Long command output in context.** Ask commands for quiet or filtered output. Send builds, tests and logs to a file and print only the exit code and failing lines. Hand wide reads to a subagent.
 
 Requirements:
 - Claude Code with the Workflow tool;
@@ -152,7 +169,14 @@ bash tests/run.sh
   - the STATUS contract;
   - non-zero exit, timeout, `RUNNING`, and `stop` killing the whole session.
 - **`tests/hooks.test.sh`** covers the redirect hook (deny shape, pass-through cases, fail-open, `SDD_MANUAL=1`) and the SessionStart output.
-- **`tests/install-settings.test.sh`** covers merge semantics, no permissions by default, the opt-in allow-list union, backup, idempotence, and refusing a non-object file.
+- **`tests/install-settings.test.sh`** (33 checks) covers:
+  - merge semantics;
+  - no permissions by default;
+  - the opt-in allow-list union;
+  - backups that never overwrite each other;
+  - idempotence;
+  - refusing a non-object file;
+  - the CLAUDE.md block, which is appended once, replaced in place, keeps the surrounding text, and causes a refusal with unbalanced markers before any file is written.
 - **`tests/brainstorm-server.test.sh`** checks that the brainstorm companion's `/tmp` session directory is random, owner-only and removed on stop.
 - **`tests/sdd-dryrun.mjs`** runs `sdd-run` with every agent mocked: 20 scenarios covering routing, escalation, adjudication, resume, refs, the ledger, the Devin routing and input guards.
 - **`tests/workflows-dryrun.mjs`** does the same for `review-gate`, `sweep` and `verify-facts`.
@@ -203,6 +227,12 @@ Workflow đưa vòng lặp ra khỏi session dài. Mỗi agent bắt đầu vớ
 1. Chạy `/plugin marketplace add vanlongme/sdd-orca`, rồi `/plugin install sdd-orca@sdd-orca`.
 2. Tắt plugin superpowers gốc.
 3. Chạy `bash …/scripts/install-settings.sh --dry-run` để xem trước. Bỏ `--dry-run` để ghi (có backup). Settings khuyến nghị không cấp quyền nào.
+4. Script cũng thêm khối rule vào `~/.claude/CLAUDE.md`: không polling, không đổ output dài vào context. Dùng `--no-claude-md` nếu muốn bỏ qua.
+
+**Settings mới thêm:**
+- `bashOutputMaxChars: 12000`: output Bash quá 12k ký tự được lưu ra file; Claude chỉ nhận đoạn xem trước kèm đường dẫn.
+- `promptCacheTtl: "1h"`: cache của session chính.
+- `subagentPromptCacheTtl: "5m"`: cache của subagent và workflow.
 
 **Devin:**
 - Yêu cầu rõ "chạy plan bằng Devin".
