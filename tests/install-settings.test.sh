@@ -43,6 +43,9 @@ bash "$I" --target "$d/settings.json" >/dev/null
 check "creates CLAUDE.md next to the settings file" test -f "$d/CLAUDE.md"
 check "the block is delimited by markers" test "$(grep -cxF "$B" "$d/CLAUDE.md")$(grep -cxF "$E" "$d/CLAUDE.md")" = 11
 check "the block carries the no-polling rule" grep -qi "poll" "$d/CLAUDE.md"
+check "the block recommends run_in_background plus the completion notification" grep -q "run_in_background" "$d/CLAUDE.md"
+check "the block recommends Monitor with an until condition instead of sleep" bash -c 'grep -q "Monitor" "$1" && grep -q "until " "$1"' _ "$d/CLAUDE.md"
+check "the block asks watches to cover failure states" grep -qi "fail" "$d/CLAUDE.md"
 check "the block carries the long-output rule" grep -q "bashOutputMaxChars\|long output\|Command output" "$d/CLAUDE.md"
 check "the block matches settings/CLAUDE.md" bash -c 'diff <(sed -n "/^<!-- sdd-orca:begin -->$/,/^<!-- sdd-orca:end -->$/p" "$1") "$2" >/dev/null' _ "$d/CLAUDE.md" "$here/../settings/CLAUDE.md"
 

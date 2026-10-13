@@ -67,7 +67,7 @@ The recommended settings grant no permissions. The Devin allow rule is a separat
 
 The rules address the two habits that cost the most in the measurements above:
 
-- **Polling.** Wait for completion notifications instead of looping `sleep` and status checks. For external state, make one blocking call or schedule one wake-up.
+- **Polling.** Run long commands with `run_in_background` and act on the completion notification. Wait for a condition with Monitor (or a background Bash) running an `until` loop that also matches failure states. Watch event streams with a filtered Monitor. Never loop `sleep` plus status checks.
 - **Long command output in context.** Ask commands for quiet or filtered output. Send builds, tests and logs to a file and print only the exit code and failing lines. Hand wide reads to a subagent.
 
 Requirements:
@@ -169,7 +169,7 @@ bash tests/run.sh
   - the STATUS contract;
   - non-zero exit, timeout, `RUNNING`, and `stop` killing the whole session.
 - **`tests/hooks.test.sh`** covers the redirect hook (deny shape, pass-through cases, fail-open, `SDD_MANUAL=1`) and the SessionStart output.
-- **`tests/install-settings.test.sh`** (33 checks) covers:
+- **`tests/install-settings.test.sh`** (36 checks) covers:
   - merge semantics;
   - no permissions by default;
   - the opt-in allow-list union;
@@ -227,7 +227,10 @@ Workflow đưa vòng lặp ra khỏi session dài. Mỗi agent bắt đầu vớ
 1. Chạy `/plugin marketplace add vanlongme/sdd-orca`, rồi `/plugin install sdd-orca@sdd-orca`.
 2. Tắt plugin superpowers gốc.
 3. Chạy `bash …/scripts/install-settings.sh --dry-run` để xem trước. Bỏ `--dry-run` để ghi (có backup). Settings khuyến nghị không cấp quyền nào.
-4. Script cũng thêm khối rule vào `~/.claude/CLAUDE.md`: không polling, không đổ output dài vào context. Dùng `--no-claude-md` nếu muốn bỏ qua.
+4. Script cũng thêm khối rule vào `~/.claude/CLAUDE.md`. Dùng `--no-claude-md` nếu muốn bỏ qua. Nội dung rule:
+   - dùng `run_in_background` và chờ notification;
+   - chờ điều kiện bằng Monitor với vòng `until`, bắt cả trạng thái lỗi, thay cho `sleep`;
+   - không đổ output dài vào context.
 
 **Settings mới thêm:**
 - `bashOutputMaxChars: 12000`: output Bash quá 12k ký tự được lưu ra file; Claude chỉ nhận đoạn xem trước kèm đường dẫn.

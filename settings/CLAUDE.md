@@ -3,7 +3,14 @@
 
 Every turn re-reads the whole context, so anything that enters it is paid for again on every later turn.
 
-**Waiting, without polling:** background shells, subagents, workflows and Monitor watches re-invoke you when they finish. Start them, end your turn, and act on the notification. Do not loop `sleep` plus status checks, and do not re-read a task's output file to see whether it is done. For external state that sends no notification (CI, deploys), make one blocking call with a timeout (`gh run watch`, `orca terminal wait`), or schedule one wake-up sized to how long the work really takes.
+**Waiting, without polling.** Never loop `sleep` plus status checks, and never re-read a task's output file to see whether it is done. Pick the waiting tool by what you are waiting for:
+
+- **A long command** (build, test suite, install, deploy script): run it with Bash `run_in_background: true`, end your turn, and act on its completion notification.
+- **One condition** (a file appears, a port opens, a log line shows up): use Monitor, or Bash `run_in_background`, with a command that exits when the condition holds. The condition must also match failure, so a crash does not look like silence. For example: `until grep -qE 'Ready|ERROR|Traceback' app.log; do sleep 1; done; grep -m1 -E 'Ready|ERROR|Traceback' app.log`
+- **A stream of events** (each error line, each CI step): use Monitor with a filter that matches both success and failure signals (`grep -E --line-buffered`).
+- **External state with no notification** (CI, a remote deploy): make one blocking call with a timeout in the background (`gh run watch`, `orca terminal wait`). Otherwise, run a Monitor poll loop at 30s or slower that exits on every terminal state.
+
+Subagents and workflows notify you when they finish; wait for that.
 
 **Command output:** ask commands for only what you need, for example:
 - `-q`/`--quiet`;
