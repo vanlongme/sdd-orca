@@ -52,7 +52,12 @@ Invoking this skill is the user's opt-in to running the `sdd-orca:sdd-run` workf
 
 With `implementer: "devin"`, transcribe- and integrate-tier tasks and their early fix rounds run on the Devin CLI. Design-tier tasks, the escalated last fix round, every review and the final fix wave stay on Claude.
 
-A small Claude agent drives the plugin's `sdd-devin` wrapper. The wrapper writes Devin's prompt itself, runs `devin -p` as a detached job, and the agent waits on it.
+A small Claude agent drives the plugin's `sdd-devin` wrapper, and waits on it. The wrapper writes Devin's prompt itself, then starts the job in one of two ways:
+
+- **Orca reachable.** Devin's interactive TUI opens in an Orca terminal tab of the worktree, titled `sdd task N #k`. The user can watch it there and type guidance. The wrapper registers the repository in Orca if Orca does not know it yet.
+- **Otherwise.** `devin -p` runs as a detached job.
+
+When reporting a Devin run, tell the user that its tabs are in Orca.
 
 Requirements:
 - the `devin` CLI is installed and logged in;

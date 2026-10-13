@@ -109,8 +109,11 @@ Ask for it explicitly, for example "execute this plan with Devin". The run then 
 - **Claude's share.** Design-tier tasks, the escalated last fix round, every review and the final fix wave stay on Claude.
 - **The wrapper.** A haiku agent drives `bin/sdd-devin` (on the Bash PATH while the plugin is enabled). It:
   1. writes Devin's prompt from fixed text, passing model-written context and findings only as file paths;
-  2. runs `devin -p` as a detached job with a timeout;
+  2. starts the job with a timeout;
   3. waits on the job in bounded steps.
+- **Watching in Orca.** When the [Orca](https://github.com/stablyai/orca) desktop runtime is reachable, each job opens Devin's interactive TUI in an Orca terminal tab of the worktree, titled `sdd task N #k`. You watch it live and can type guidance into it. Without Orca, `devin -p` runs as a detached background job.
+- **How a job ends.** Devin ends the job by writing its `STATUS:` line to `<job>/status`. The wrapper then stops the idle TUI and renames the tab with the outcome; the tab stays open for review. If Devin sits idle with no status, it gets one nudge; if it then stays idle, the job is reported `BLOCKED`.
+- **Repository registration.** The wrapper registers the repository in Orca if Orca does not know it yet.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -118,6 +121,9 @@ Ask for it explicitly, for example "execute this plan with Devin". The run then 
 | `SDD_DEVIN_MODE` | `dangerous` | `--permission-mode`. A headless run cannot answer permission prompts. |
 | `SDD_DEVIN_SANDBOX` | `0` | `1` adds `--sandbox` |
 | `SDD_DEVIN_TIMEOUT` | `5400` | seconds before the job is killed |
+| `SDD_DEVIN_ORCA` | `auto` | `auto`: an Orca tab when Orca is reachable, otherwise detached; `1`: require Orca; `0`: always detached |
+| `SDD_DEVIN_ORCA_ADD_REPO` | `1` | `0` stops the wrapper from registering an unknown repository in Orca |
+| `SDD_DEVIN_IDLE_SECS` | `180` | in Orca mode, idle seconds before the nudge, and again before giving up |
 
 Setup: `bash …/scripts/install-settings.sh --with-devin` adds the allow rule `Bash(sdd-devin:*)`. Without the rule, Claude Code's auto mode refuses to let an agent launch another coding agent.
 
@@ -136,8 +142,9 @@ Setup: `bash …/scripts/install-settings.sh --with-devin` adds the allow rule `
 bash tests/run.sh
 ```
 
-- **`tests/sdd-devin.test.sh`** (44 checks) runs the wrapper against a fake `devin` in a throwaway git repo. It covers:
+- **`tests/sdd-devin.test.sh`** (64 checks) runs the wrapper against a fake `devin` and a fake `orca` in a throwaway git repo. It covers:
   - input validation, and that no environment variable can swap in another executable;
+  - Orca mode: repository registration, tab creation, interactive mode, the status file, the nudge, giving up, stop, and the fallback to detached mode;
   - argv and prompt contents;
   - relative paths;
   - the STATUS contract;
@@ -200,6 +207,7 @@ Workflow đưa vòng lặp ra khỏi session dài. Mỗi agent bắt đầu vớ
 - Cần CLI `devin` đã đăng nhập, và chủ động thêm rule `Bash(sdd-devin:*)` bằng `--with-devin`.
 - Rule này cho phép mọi agent khởi chạy Devin ở chế độ bỏ qua kiểm tra quyền mà không hỏi bạn. Điều đó bao gồm cả agent bị prompt-injection từ nội dung repo hay plan. Chỉ bật trên máy và repo tin cậy, và gỡ rule khi không dùng.
 - Devin chạy với quyền `dangerous` trong worktree, nên luôn dùng worktree.
+- Khi Orca đang chạy, mỗi job Devin mở TUI trong một tab Orca của worktree (`sdd task N #k`). Bạn xem trực tiếp và có thể gõ hướng dẫn cho Devin.
 - SWE-2 chỉ miễn phí cho gói self-serve đến **15/10/2026**. Sau đó hãy kiểm tra giá trước khi dùng.
 
 **Kiểm thử:** chạy `bash tests/run.sh`.

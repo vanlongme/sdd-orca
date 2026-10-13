@@ -1,26 +1,55 @@
 #!/usr/bin/env bash
-# sdd-devin: run the Devin CLI headless as an SDD implementer, as a detached job.
+# sdd-devin: run the Devin CLI as an SDD implementer job, watchable in the Orca desktop app.
 #
 #   sdd-devin start --task N --brief FILE --report FILE --constraints FILE --workspace DIR
-#                   [--context FILE] [--findings FILE]          -> prints JOB=<dir>
-#   sdd-devin wait JOB [MAX_SECONDS]                            -> prints RUNNING, or EXIT <code> and the STATUS line
+#                   [--context FILE] [--findings FILE]   -> prints JOB=<dir> (and WATCH=... in an Orca tab)
+#   sdd-devin wait JOB [MAX_SECONDS]                     -> prints RUNNING, or EXIT <code> and the STATUS line
 #   sdd-devin stop JOB
+#
+# When the Orca runtime is reachable, the job runs Devin's interactive TUI in an Orca terminal
+# tab of the job's worktree, so you can watch it and type guidance while it works. Otherwise
+# it runs `devin -p` as a detached background job. Devin signals completion by writing its
+# STATUS line to <job>/status; an Orca job that goes idle without one is nudged once.
 #
 # Devin's instructions are fixed text in this script. Model-written material (the
 # controller's context, review findings) reaches Devin only as files it is pointed at.
 # Environment:
 #   SDD_DEVIN_MODEL    Devin model id (default swe-2-high)
-#   SDD_DEVIN_MODE     --permission-mode for devin (default dangerous; a headless run cannot answer prompts)
+#   SDD_DEVIN_MODE     --permission-mode for devin (default dangerous; an unattended run cannot answer prompts)
 #   SDD_DEVIN_SANDBOX  1 adds --sandbox
 #   SDD_DEVIN_TIMEOUT  seconds before the job is killed (default 5400)
-# The executable is always `devin` from PATH; there is deliberately no override, so an
-# allow rule for this wrapper cannot be turned into "run any program".
+#   SDD_DEVIN_ORCA     auto (default): Orca tab when Orca is reachable, else detached;
+#                      1: require Orca; 0: always detached
+#   SDD_DEVIN_ORCA_ADD_REPO  1 (default) registers the repository in Orca when Orca does not know it
+#   SDD_DEVIN_IDLE_SECS      Orca mode: idle seconds before the nudge, and again before giving up (default 180)
+# The executables are always `devin` and `orca` from PATH; there is deliberately no override,
+# so an allow rule for this wrapper cannot be turned into "run any program".
 set -euo pipefail
 
 die() { echo "sdd-devin: $*" >&2; exit 2; }
 plain() { case "$1" in *$'\n'*|*$'\r'*|'') return 1 ;; esac; }
 abs() { case "$1" in /*) printf '%s' "$1" ;; *) printf '%s/%s' "$PWD" "$1" ;; esac; }
 STATUS_RE='STATUS: *(DONE_WITH_CONCERNS|DONE|BLOCKED|NEEDS_CONTEXT)'
+
+orca_reachable() {
+  command -v orca >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 \
+    && orca status --json 2>/dev/null | jq -e '.result.runtime.reachable == true' >/dev/null 2>&1
+}
+
+# Creates the Orca tab running CMD in worktree ROOT; prints the terminal handle.
+orca_tab() {
+  local root=$1 title=$2 cmd=$3 out
+  out=$(orca terminal create --worktree "path:$root" --title "$title" --command "$cmd" --json 2>/dev/null || true)
+  if [ "$(jq -r '.error.code // empty' <<<"$out" 2>/dev/null)" = selector_not_found ] && [ "${SDD_DEVIN_ORCA_ADD_REPO:-1}" = 1 ]; then
+    # Orca does not know this repository yet: register its main checkout, then retry.
+    local main; main=$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+    main=${main%/.git}
+    orca repo add --path "$main" --json >/dev/null 2>&1 || return 1
+    echo "sdd-devin: registered $main in Orca so the job can be watched" >&2
+    out=$(orca terminal create --worktree "path:$root" --title "$title" --command "$cmd" --json 2>/dev/null || true)
+  fi
+  jq -er '.result.terminal.handle // empty' <<<"$out" 2>/dev/null
+}
 
 start() {
   local task='' brief='' report='' constraints='' workspace='' context='' findings=''
@@ -48,8 +77,16 @@ start() {
 
   local timeout_s=${SDD_DEVIN_TIMEOUT:-5400}
   [[ "$timeout_s" =~ ^[0-9]+$ ]] || die "SDD_DEVIN_TIMEOUT must be a number of seconds"
+  local orca_mode=${SDD_DEVIN_ORCA:-auto}
+  case "$orca_mode" in auto|0|1) ;; *) die "SDD_DEVIN_ORCA must be auto, 0 or 1" ;; esac
   local bin; bin=$(command -v devin) || die "devin CLI not found on PATH"
   local root; root=$(git rev-parse --show-toplevel 2>/dev/null) || die "run from inside the plan's git checkout"
+
+  local use_orca=0
+  if [ "$orca_mode" != 0 ]; then
+    if orca_reachable; then use_orca=1
+    elif [ "$orca_mode" = 1 ]; then die "Orca runtime not reachable (SDD_DEVIN_ORCA=1)"; fi
+  fi
 
   local n=1; while [ -e "$workspace/devin-task-$task-$n" ]; do n=$((n + 1)); done
   local job="$workspace/devin-task-$task-$n"
@@ -73,59 +110,147 @@ start() {
     echo "2. Run the focused tests for your change."
     echo "3. Commit your work on the current branch with a descriptive message. Never commit anything under .superpowers/."
     echo "4. $report_verb the report file $report: what you implemented, the files changed, the test commands with their output (red and green), and any concerns."
+    echo "5. As your very last action, write your final STATUS line to the status file below with a shell command, then stop."
     echo
-    echo "Rules: stay on the current branch. Never push, rebase, reset --hard, amend or force anything. Never run docker/system prune or other host cleanup. Do not start other agents. Do not edit files outside this repository except the report file."
+    echo "Rules: stay on the current branch. Never push, rebase, reset --hard, amend or force anything. Never run docker/system prune or other host cleanup. Do not start other agents. Do not edit files outside this repository except the report file and the status file."
     echo
-    echo "End your final message with exactly one line, one of:"
+    echo "Status file: $job/status"
+    echo "Your final STATUS line is exactly one of:"
     echo "STATUS: DONE"
     echo "STATUS: DONE_WITH_CONCERNS <concern>"
     echo "STATUS: BLOCKED <reason>"
     echo "STATUS: NEEDS_CONTEXT <question>"
+    echo "Also end your final message with that line."
   } > "$job/prompt.md"
 
-  local args=(-p --prompt-file "$job/prompt.md" --model "${SDD_DEVIN_MODEL:-swe-2-high}"
+  local args=(--prompt-file "$job/prompt.md" --model "${SDD_DEVIN_MODEL:-swe-2-high}"
     --permission-mode "${SDD_DEVIN_MODE:-dangerous}" --respect-workspace-trust false
     --export "$job/conversation.atif")
   if [ "${SDD_DEVIN_SANDBOX:-0}" = 1 ]; then args+=(--sandbox); fi
+
+  if [ "$use_orca" = 1 ]; then
+    case "$job" in *"'"*) use_orca=0; echo "sdd-devin: job path contains a quote; running detached" >&2 ;; esac
+  fi
+  if [ "$use_orca" = 1 ]; then
+    # The tab's shell runs this script. Devin keeps the terminal (timeout --foreground) so
+    # you can watch and type into its TUI; a HUP from closing the tab still records an exit.
+    {
+      echo '#!/usr/bin/env bash'
+      printf 'cd %q || exit 2\n' "$root"
+      printf 'echo $$ > %q\n' "$job/runner.pid"
+      echo "trap 'true' HUP"
+      printf 'timeout --foreground %q' "$timeout_s"; printf ' %q' "$bin" "${args[@]}"; echo
+      printf 'echo $? > %q && mv %q %q\n' "$job/exit.tmp" "$job/exit.tmp" "$job/exit"
+    } > "$job/run.sh"
+    local handle
+    if handle=$(orca_tab "$root" "sdd task $task #$n" "bash '$job/run.sh'") && [ -n "$handle" ]; then
+      printf '%s\n' "$handle" > "$job/orca-terminal"
+      echo "JOB=$job"
+      echo "WATCH=orca terminal $handle (tab \"sdd task $task #$n\" in the worktree $root)"
+      return 0
+    fi
+    [ "$orca_mode" = 1 ] && die "could not open an Orca terminal for $root"
+    echo "sdd-devin: could not open an Orca terminal; running detached" >&2
+  fi
 
   # Detach into a new session so the job outlives the tool call that started it.
   # Arguments travel positionally; nothing is re-parsed by a shell.
   setsid nohup bash -c 'job=$2; tmo=$3; cd "$1" || { echo 2 > "$job/exit"; exit 2; }; shift 4
     timeout "$tmo" "$@" > "$job/out.log" 2> "$job/err.log" < /dev/null
     echo $? > "$job/exit.tmp" && mv "$job/exit.tmp" "$job/exit"' \
-    sdd-devin "$root" "$job" "$timeout_s" -- "$bin" "${args[@]}" > /dev/null 2>&1 < /dev/null &
+    sdd-devin "$root" "$job" "$timeout_s" -- "$bin" -p "${args[@]}" > /dev/null 2>&1 < /dev/null &
   echo $! > "$job/pid"
   echo "JOB=$job"
+}
+
+# Ends the Devin of an Orca job: TERM to timeout(1), which forwards it to Devin.
+stop_orca_devin() {
+  local job=$1 pid
+  [ -f "$job/runner.pid" ] || return 0
+  pid=$(cat "$job/runner.pid")
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 0
+  pkill -TERM -P "$pid" 2>/dev/null || true
+}
+
+orca_idle() {  # 0 = the TUI is idle waiting for input, 1 = busy or unknown
+  orca terminal wait --terminal "$1" --for tui-idle --timeout-ms 1000 --json 2>/dev/null \
+    | jq -e '.result.wait.satisfied == true' >/dev/null 2>&1
 }
 
 wait_job() {
   local job=${1-} max=${2:-540}
   { plain "$job" && [ -f "$job/prompt.md" ]; } || die "not a job directory: $job"
   [[ "$max" =~ ^[0-9]+$ ]] || die "MAX_SECONDS must be a number"
-  local end=$((SECONDS + max))
-  while [ ! -f "$job/exit" ] && [ "$SECONDS" -lt "$end" ]; do sleep 2; done
-  if [ ! -f "$job/exit" ]; then
-    echo "RUNNING (waited ${max}s; run wait again)"
+  local idle_secs=${SDD_DEVIN_IDLE_SECS:-180}
+  [[ "$idle_secs" =~ ^[0-9]+$ ]] || die "SDD_DEVIN_IDLE_SECS must be a number"
+  local handle=''; [ -f "$job/orca-terminal" ] && handle=$(cat "$job/orca-terminal")
+  local end=$((SECONDS + max)) idle_since='' gave_up=''
+  while [ ! -f "$job/status" ] && [ ! -f "$job/exit" ] && [ "$SECONDS" -lt "$end" ]; do
+    if [ -n "$handle" ]; then
+      if orca_idle "$handle"; then
+        idle_since=${idle_since:-$SECONDS}
+        if [ $((SECONDS - idle_since)) -ge "$idle_secs" ]; then
+          if [ ! -f "$job/nudged" ]; then
+            orca terminal send --terminal "$handle" --text "You are idle but have not written the status file. Finish the task if it is not finished, then write your final STATUS line to $job/status with a shell command." --enter --json >/dev/null 2>&1 || true
+            touch "$job/nudged"; idle_since=''
+          else
+            gave_up=1; break
+          fi
+        fi
+      else
+        idle_since=''
+      fi
+    fi
+    sleep 2
+  done
+
+  if [ -z "$gave_up" ] && [ ! -f "$job/status" ] && [ ! -f "$job/exit" ]; then
+    echo "RUNNING (waited ${max}s; run wait again)${handle:+; watch it in Orca: terminal $handle}"
     return 0
   fi
-  echo "EXIT $(cat "$job/exit")"
-  grep -Eo "$STATUS_RE.*" "$job/out.log" 2>/dev/null | tail -n 1 | tr -d '*`' \
-    || echo "STATUS: BLOCKED no STATUS line in Devin output"
-  echo "--- last lines of $job/out.log"
-  tail -n 15 "$job/out.log" 2>/dev/null || true
-  if [ -s "$job/err.log" ]; then
-    echo "--- last lines of $job/err.log"
-    tail -n 10 "$job/err.log"
+
+  local status code
+  if [ -f "$job/status" ]; then
+    sleep 3  # let Devin finish printing its final message
+    status=$(grep -Eo "$STATUS_RE.*" "$job/status" | head -n 1 | tr -d '*`' || true)
+    code=0
+  elif [ -n "$gave_up" ]; then
+    status="STATUS: BLOCKED Devin went idle without writing a status, even after a nudge"
+    code=0
+  else
+    code=$(cat "$job/exit")
+    status=$(grep -Eo "$STATUS_RE.*" "$job/out.log" 2>/dev/null | tail -n 1 | tr -d '*`' || true)
+  fi
+  [ -n "$status" ] || status="STATUS: BLOCKED no STATUS line from Devin"
+  if [ -n "$handle" ]; then
+    stop_orca_devin "$job"
+    orca terminal rename --terminal "$handle" --title "sdd $(basename "$job"): ${status#STATUS: }" --json >/dev/null 2>&1 || true
+  fi
+  echo "EXIT $code"
+  echo "$status"
+  if [ -n "$handle" ]; then
+    echo "--- the session stays visible in Orca: terminal $handle; transcript: $job/conversation.atif"
+  else
+    echo "--- last lines of $job/out.log"
+    tail -n 15 "$job/out.log" 2>/dev/null || true
+    if [ -s "$job/err.log" ]; then
+      echo "--- last lines of $job/err.log"
+      tail -n 10 "$job/err.log"
+    fi
   fi
 }
 
 stop_job() {
   local job=${1-}
-  { plain "$job" && [ -f "$job/pid" ]; } || die "not a job directory: $job"
-  local pid; pid=$(cat "$job/pid")
-  [[ "$pid" =~ ^[0-9]+$ ]] || die "bad pid file"
-  # timeout(1) moves itself into its own process group, so signal the whole session.
-  pkill -TERM -s "$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+  { plain "$job" && { [ -f "$job/pid" ] || [ -f "$job/orca-terminal" ]; }; } || die "not a job directory: $job"
+  if [ -f "$job/orca-terminal" ]; then
+    stop_orca_devin "$job"
+  else
+    local pid; pid=$(cat "$job/pid")
+    [[ "$pid" =~ ^[0-9]+$ ]] || die "bad pid file"
+    # timeout(1) moves itself into its own process group, so signal the whole session.
+    pkill -TERM -s "$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+  fi
   echo "stopped $job"
 }
 
