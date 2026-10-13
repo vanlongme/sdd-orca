@@ -8,7 +8,7 @@ tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 
 echo '{"model":"opus","env":{"KEEP":"1","CLAUDE_CODE_SUBAGENT_MODEL":"haiku"},"permissions":{"allow":["Bash(ls:*)"],"deny":["Bash(rm:*)"]},"hooks":{"Stop":[]}}' > "$tmp/s.json"
 cp "$tmp/s.json" "$tmp/orig.json"
-out=$(bash "$I" --target "$tmp/s.json" --dry-run)
+out=$(bash "$I" --target "$tmp/s.json" --dry-run --no-claude-md)
 check "dry-run leaves the file unchanged" cmp -s "$tmp/s.json" "$tmp/orig.json"
 check "dry-run writes no backup" test -z "$(ls "$tmp" | grep bak)"
 check "keeps unrelated keys" test "$(jq -c '[.model, .env.KEEP, .hooks]' <<<"$out")" = '["opus","1",{"Stop":[]}]'
@@ -18,11 +18,11 @@ check "sets Max-plan defaults: effort, fallback model, transcript retention" tes
 check "caps inline Bash output and sets cache TTLs" test "$(jq -c '[.bashOutputMaxChars, .promptCacheTtl, .subagentPromptCacheTtl]' <<<"$out")" = '[12000,"1h","5m"]'
 check "does not add the Devin rule by default" test "$(jq -c .permissions.allow <<<"$out")" = '["Bash(ls:*)"]'
 check "keeps the deny list" test "$(jq -c .permissions.deny <<<"$out")" = '["Bash(rm:*)"]'
-out=$(bash "$I" --target "$tmp/s.json" --dry-run --with-devin)
+out=$(bash "$I" --target "$tmp/s.json" --dry-run --no-claude-md --with-devin)
 check "--with-devin unions the Devin rule in order" test "$(jq -c .permissions.allow <<<"$out")" = '["Bash(ls:*)","Bash(sdd-devin:*)"]'
-out=$(bash "$I" --target "$tmp/none.json" --dry-run)
+out=$(bash "$I" --target "$tmp/none.json" --dry-run --no-claude-md)
 check "a missing target starts from an empty object" test "$(jq -c 'has("permissions")' <<<"$out")" = false
-out=$(bash "$I" --target "$tmp/none.json" --dry-run --with-devin)
+out=$(bash "$I" --target "$tmp/none.json" --dry-run --no-claude-md --with-devin)
 check "--with-devin works without an existing allow list" test "$(jq -c .permissions.allow <<<"$out")" = '["Bash(sdd-devin:*)"]'
 
 bash "$I" --target "$tmp/s.json" --with-devin >/dev/null
@@ -50,6 +50,8 @@ check "the block carries the no-polling rule" grep -qi "poll" "$d/CLAUDE.md"
 check "the block recommends run_in_background plus the completion notification" grep -q "run_in_background" "$d/CLAUDE.md"
 check "the block recommends Monitor with an until condition instead of sleep" bash -c 'grep -q "Monitor" "$1" && grep -q "until " "$1"' _ "$d/CLAUDE.md"
 check "the block asks watches to cover failure states" grep -qi "fail" "$d/CLAUDE.md"
+check "the block teaches rg for files and content, with a grep fallback" bash -c 'grep -q "rg --files" "$1" && grep -q "rg -n" "$1" && grep -q "grep -rn" "$1"' _ "$d/CLAUDE.md"
+check "the block teaches reading line ranges" grep -q "sed -n" "$d/CLAUDE.md"
 check "the block carries the long-output rule" grep -q "bashOutputMaxChars\|long output\|Command output" "$d/CLAUDE.md"
 check "the block matches settings/CLAUDE.md" bash -c 'diff <(sed -n "/^<!-- sdd-orca:begin -->$/,/^<!-- sdd-orca:end -->$/p" "$1") "$2" >/dev/null' _ "$d/CLAUDE.md" "$here/../settings/CLAUDE.md"
 

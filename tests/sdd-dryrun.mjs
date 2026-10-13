@@ -200,6 +200,17 @@ const done = () => ({ status: 'DONE', commits: 1, tests: 'ok' })
     r.out.ledgerPending.some(x => x.startsWith('Task 2: complete')) && r.out.refs === 'refs/sdd/2026-10-13-calc' &&
     r.out.results[0].range === 'refs/sdd/2026-10-13-calc/base..refs/sdd/2026-10-13-calc/t1', r)
 }
+// 13b. every agent gets the rg search recipe through the role preamble
+{
+  const r = await run({ plan: 'p.md' }, (l) => {
+    if (l === 'preflight') return pre([[1, 'transcribe']])
+    if (l.startsWith('impl:')) return done()
+    if (l.startsWith('review:')) return clean
+    if (l === 'final-review') return { ready: true, issues: [], declined: [] }
+    return { appended: true }
+  })
+  check('search recipe on every agent', r.calls.length > 3 && r.calls.every(c => c.prompt.includes('rg -n') && c.prompt.includes('rg --files') && c.prompt.includes('sed -n')), r)
+}
 // 14. Devin implementer: transcribe/integrate tasks and early fix rounds go to sdd-devin; design and the escalated round stay on Claude
 {
   let d1 = 0

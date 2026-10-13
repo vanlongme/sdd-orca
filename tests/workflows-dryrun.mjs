@@ -9,7 +9,7 @@ async function run(file, args, mock) {
   const meta = Function('return ' + metaSrc)()  // literal check: evaluates with no free variables
   const body = src.replace(/export const meta = /, 'const meta = ')
   const calls = []
-  const agent = async (prompt, opts = {}) => { calls.push({ label: opts.label, model: opts.model, effort: opts.effort, phase: opts.phase }); return mock(prompt, opts, calls.length) }
+  const agent = async (prompt, opts = {}) => { calls.push({ label: opts.label, model: opts.model, effort: opts.effort, phase: opts.phase, prompt }); return mock(prompt, opts, calls.length) }
   const parallel = async thunks => Promise.all(thunks.map(t => t().catch(() => null)))
   const pipeline = async (items, ...stages) => Promise.all(items.map(async (it, i) => { let r = it; for (const s of stages) { try { r = await s(r, it, i) } catch { return null } } return r }))
   const logs = []
@@ -17,7 +17,7 @@ async function run(file, args, mock) {
   const out = await fn(args, agent, parallel, pipeline, m => logs.push(m), () => {}, { total: null }, async () => null)
   const phases = meta.phases.map(p => p.title)
   const badPhase = calls.filter(c => c.phase && !phases.includes(c.phase))
-  return { name: meta.name, agents: calls.length, labels: calls.map(c => `${c.label}(${c.model || 'inherit'}/${c.effort || '-'})`).join(' '), logs, out, badPhase }
+  return { name: meta.name, calls, agents: calls.length, labels: calls.map(c => `${c.label}(${c.model || 'inherit'}/${c.effort || '-'})`).join(' '), logs, out, badPhase }
 }
 const has = (o, k) => o.schema && o.schema.properties && k in o.schema.properties
 let rv = 0
@@ -38,6 +38,7 @@ let r = show('review-gate multi-tenant', await run('review-gate.js', { base: 'ma
   }
   if (has(o, 'refuted')) { if (o.label.startsWith('verify:c.ts')) throw new Error('agent died'); return { refuted: o.label.includes(':security') ? false : true, reason: 'r' } }
 }))
+expect('review-gate: every finder and verifier gets the rg search recipe', r.calls.every(c => c.prompt.includes('rg -n') && c.prompt.includes('rg --files')))
 expect('review-gate: duplicates merged, critical gets a second security vote and survives', r.out.confirmed.length === 1 && r.out.confirmed[0].title === 'leak' && r.out.confirmed[0].votes.length === 2 && !r.badPhase.length)
 expect('review-gate: refuted, dead-verifier and over-cap findings are reported, not dropped', r.out.refuted.length === 2 && r.out.unverified.map(u => u.where).join() === 'web/c.ts:3,y.go:2' && r.agents === 10)
 r = show('review-gate empty', await run('review-gate.js', 'main', (p, o) => ({ findings: [] })))
@@ -50,10 +51,12 @@ r = show('sweep report', await run('sweep.js', { items: ['services/a', 'services
   if (has(o, 'findings')) return { item: 'i', summary: 's', findings: [{ severity: 'high', where: 'f', issue: 'i' }] }
   if (has(o, 'top')) return { top: [], themes: ['t'] }
 }))
+expect('sweep report: every item agent gets the rg search recipe', r.calls.filter(c => c.label.startsWith('item:')).every(c => c.prompt.includes('rg -n') && c.prompt.includes('sed -n')))
 expect('sweep report: one agent per item plus a synthesis', r.agents === 4 && r.out.reports.length === 3 && r.out.missing.length === 0 && r.out.synthesis.themes[0] === 't')
 r = show('sweep edit blocked', await run('sweep.js', JSON.stringify({ items: ['a', 'b', 'c'], task: 'translate comments', mode: 'edit', model: 'haiku', effort: 'low' }), (p, o) => {
   return o.label === 'edit:b' ? { item: 'b', status: 'blocked', summary: 'conflict' } : { item: 'a', status: 'done', commit: 'c'.repeat(40), summary: 's' }
 }))
+expect('sweep edit: every edit agent gets the rg search recipe', r.calls.every(c => c.prompt.includes('rg -n')))
 expect('sweep edit: sequential, stops at the first blocked item', r.agents === 2 && r.out.done === 1 && r.out.notReached.join() === 'c' && r.logs.includes('stopped at b: conflict'))
 try { await run('sweep.js', { items: ['../etc'], task: 't' }, () => null); expect('sweep: path traversal rejected', false) } catch (e) { expect(`sweep: path traversal rejected (${e.message})`, /unsafe item/.test(e.message)) }
 
