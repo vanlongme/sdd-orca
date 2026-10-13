@@ -15,6 +15,7 @@ sdd-orca is a fork of [obra/superpowers](https://github.com/obra/superpowers) by
 - `skills/subagent-driven-development/SKILL.md` is new. It runs the plan through the `sdd-orca:sdd-run` workflow. The upstream skill body is kept verbatim (minus frontmatter) as `manual-loop.md`, for sessions without the Workflow tool.
 - `skills/writing-plans/SKILL.md`: the "Subagent-driven" execution option describes the workflow run and the optional Devin implementer.
 - `skills/using-superpowers/references/claude-code-tools.md`: the "Cheaper orchestration" section now says not to wrap the workflow in an orchestrator subagent. That advice is limited to the manual-loop fallback.
+- `skills/brainstorming/scripts/start-server.sh` creates its default `/tmp` session directory with `mktemp -d` (atomic, owner-only, random name). Upstream uses the predictable `/tmp/brainstorm-<pid>-<time>`, which another local user could pre-create.
 - `hooks/hooks.json` adds a `PreToolUse` hook (`hooks/redirect-sdd`). It redirects `superpowers:subagent-driven-development` to the sdd-orca skill when both plugins are enabled. Upstream's Cursor hook file is not included.
 
 ## What sdd-orca added

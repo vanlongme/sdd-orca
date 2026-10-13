@@ -13,7 +13,8 @@
 #   SDD_DEVIN_MODE     --permission-mode for devin (default dangerous; a headless run cannot answer prompts)
 #   SDD_DEVIN_SANDBOX  1 adds --sandbox
 #   SDD_DEVIN_TIMEOUT  seconds before the job is killed (default 5400)
-#   SDD_DEVIN_BIN      devin executable (default devin)
+# The executable is always `devin` from PATH; there is deliberately no override, so an
+# allow rule for this wrapper cannot be turned into "run any program".
 set -euo pipefail
 
 die() { echo "sdd-devin: $*" >&2; exit 2; }
@@ -47,8 +48,7 @@ start() {
 
   local timeout_s=${SDD_DEVIN_TIMEOUT:-5400}
   [[ "$timeout_s" =~ ^[0-9]+$ ]] || die "SDD_DEVIN_TIMEOUT must be a number of seconds"
-  local bin=${SDD_DEVIN_BIN:-devin}
-  command -v "$bin" >/dev/null 2>&1 || die "devin CLI not found (install it or set SDD_DEVIN_BIN)"
+  local bin; bin=$(command -v devin) || die "devin CLI not found on PATH"
   local root; root=$(git rev-parse --show-toplevel 2>/dev/null) || die "run from inside the plan's git checkout"
 
   local n=1; while [ -e "$workspace/devin-task-$task-$n" ]; do n=$((n + 1)); done

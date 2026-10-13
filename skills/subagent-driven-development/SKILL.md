@@ -56,7 +56,7 @@ A small Claude agent drives the plugin's `sdd-devin` wrapper. The wrapper writes
 
 Requirements:
 - the `devin` CLI is installed and logged in;
-- the allow rule `Bash(sdd-devin:*)` is set (scripts/install-settings.sh adds it). Without it, auto mode refuses to let a workflow agent start another coding agent.
+- the user has opted in to the allow rule `Bash(sdd-devin:*)` (for example with `scripts/install-settings.sh --with-devin`). Without it, auto mode refuses to let a workflow agent start another coding agent. Never add the rule yourself: it lets any agent start Devin with its checks bypassed.
 
 The model is set by `SDD_DEVIN_MODEL` (default `swe-2-high`). Check the Devin plan's pricing for that model before relying on it.
 

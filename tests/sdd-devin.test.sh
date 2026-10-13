@@ -23,7 +23,8 @@ case "${FAKE_MODE:-done}" in
 esac
 FAKE
 chmod +x "$tmp/fake-devin"
-export SDD_DEVIN_BIN="$tmp/fake-devin" FAKE_ARGS="$tmp/args"
+mkdir -p "$tmp/bin" && ln -s "$tmp/fake-devin" "$tmp/bin/devin"
+export PATH="$tmp/bin:$PATH" FAKE_ARGS="$tmp/args"
 
 repo="$tmp/repo"; mkdir -p "$repo/sub"
 git -C "$repo" init -q && git -C "$repo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
@@ -45,7 +46,12 @@ b")" = 2
 check "rejects a non-numeric timeout" test "$(cd "$repo" && SDD_DEVIN_TIMEOUT=abc "$SD" start "${base[@]}" >/dev/null 2>&1; echo $?)" = 2
 check "rejects running outside git" test "$(cd "$tmp" && "$SD" start "${base[@]}" >/dev/null 2>&1; echo $?)" = 2
 check "wait rejects a non-job directory" test "$("$SD" wait "$tmp" 1 >/dev/null 2>&1; echo $?)" = 2
-check "missing devin binary is reported" test "$(cd "$repo" && SDD_DEVIN_BIN="$tmp/none" "$SD" start "${base[@]}" >/dev/null 2>&1; echo $?)" = 2
+check "missing devin binary is reported" test "$(cd "$repo" && PATH=/usr/bin:/bin "$SD" start "${base[@]}" >/dev/null 2>&1; echo $?)" = 2
+printf '#!/bin/sh\necho pwned > "%s/pwned"\n' "$tmp" > "$tmp/evil" && chmod +x "$tmp/evil"
+job=$(cd "$repo" && SDD_DEVIN_BIN="$tmp/evil" "$SD" start "${base[@]}" | sed -n 's/^JOB=//p')
+"$SD" wait "$job" 30 >/dev/null
+check "SDD_DEVIN_BIN cannot redirect the wrapper to another executable" test ! -e "$tmp/pwned"
+rm -rf "$job"
 
 echo "successful job"
 out=$(cd "$repo/sub" && "$SD" start "${base[@]}")

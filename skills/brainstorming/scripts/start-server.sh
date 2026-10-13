@@ -120,7 +120,12 @@ if [[ -n "$PROJECT_DIR" ]]; then
   export BRAINSTORM_PORT_FILE="${PROJECT_DIR}/.superpowers/brainstorm/.last-port"
   export BRAINSTORM_TOKEN_FILE="${PROJECT_DIR}/.superpowers/brainstorm/.last-token"
 else
-  SESSION_DIR="/tmp/brainstorm-${SESSION_ID}"
+  # mktemp creates the directory atomically, owner-only, with an unpredictable
+  # name, so another local user cannot pre-create or symlink it.
+  SESSION_DIR="$(mktemp -d /tmp/brainstorm-XXXXXXXXXX)" || {
+    echo '{"error": "Could not create a session directory under /tmp"}'
+    exit 1
+  }
 fi
 
 STATE_DIR="${SESSION_DIR}/state"

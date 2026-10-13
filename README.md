@@ -38,7 +38,7 @@ Recommended settings (optional; this backs up your file first, and `--dry-run` p
 
 ```bash
 bash ~/.claude/plugins/marketplaces/sdd-orca/scripts/install-settings.sh --dry-run
-bash ~/.claude/plugins/marketplaces/sdd-orca/scripts/install-settings.sh            # add --no-devin to skip the Devin allow rule
+bash ~/.claude/plugins/marketplaces/sdd-orca/scripts/install-settings.sh
 ```
 
 The merge (`settings/recommended.json`) sets these values and keeps everything else:
@@ -50,7 +50,8 @@ The merge (`settings/recommended.json`) sets these values and keeps everything e
 | `CLAUDE_CODE_SUBAGENT_MODEL` | `sonnet` | default subagent model; workflows still pick per step |
 | `ANTHROPIC_DEFAULT_SONNET_MODEL` / `..._HAIKU_MODEL` | `claude-sonnet-5-5` / `claude-haiku-5-5` | pin the aliases the workflows use |
 | `CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS` | `4` | bound parallel agents (and rate-limit bursts) |
-| `permissions.allow` | `Bash(sdd-devin:*)` | lets workflow agents start the Devin wrapper (unioned, never replaces your list) |
+
+The recommended settings grant no permissions. The Devin allow rule is a separate opt-in: `--with-devin` (see below).
 
 Requirements:
 - Claude Code with the Workflow tool;
@@ -118,9 +119,14 @@ Ask for it explicitly, for example "execute this plan with Devin". The run then 
 | `SDD_DEVIN_SANDBOX` | `0` | `1` adds `--sandbox` |
 | `SDD_DEVIN_TIMEOUT` | `5400` | seconds before the job is killed |
 
-**Risks you accept:**
-- Devin runs with its permission checks bypassed in your worktree, so use a worktree, not your main checkout.
-- The `Bash(sdd-devin:*)` allow rule lets any agent in your sessions start Devin through this wrapper. Without the rule, Claude Code's auto mode refuses to let an agent launch another coding agent.
+Setup: `bash …/scripts/install-settings.sh --with-devin` adds the allow rule `Bash(sdd-devin:*)`. Without the rule, Claude Code's auto mode refuses to let an agent launch another coding agent.
+
+**Risks you accept with `--with-devin`:**
+- The rule is narrow in syntax but not in effect. Any agent in your sessions can start Devin with its permission checks bypassed, and you are not asked. That includes an agent steered by prompt-injected text in a repository, plan or issue. In effect, those agents get unsandboxed code execution.
+- Opt in only on machines and repositories you trust.
+- Remove the rule when you are not running Devin plans.
+- Devin works in your worktree with checks bypassed, so use a worktree, not your main checkout.
+- The wrapper always runs `devin` from `PATH` and has no executable override, so the rule cannot be pointed at another program.
 
 **Pricing:** check your Devin plan before you rely on it. Devin's docs state that SWE-2 is free for self-serve plans only through **2026-10-15**, with per-token pricing afterwards. Under a Claude Max plan, the default Claude haiku/sonnet implementers add no extra cost.
 
@@ -130,14 +136,15 @@ Ask for it explicitly, for example "execute this plan with Devin". The run then 
 bash tests/run.sh
 ```
 
-- **`tests/sdd-devin.test.sh`** (43 checks) runs the wrapper against a fake `devin` in a throwaway git repo. It covers:
-  - input validation;
+- **`tests/sdd-devin.test.sh`** (44 checks) runs the wrapper against a fake `devin` in a throwaway git repo. It covers:
+  - input validation, and that no environment variable can swap in another executable;
   - argv and prompt contents;
   - relative paths;
   - the STATUS contract;
   - non-zero exit, timeout, `RUNNING`, and `stop` killing the whole session.
 - **`tests/hooks.test.sh`** covers the redirect hook (deny shape, pass-through cases, fail-open, `SDD_MANUAL=1`) and the SessionStart output.
-- **`tests/install-settings.test.sh`** covers merge semantics, the allow-list union, backup, idempotence, and refusing a non-object file.
+- **`tests/install-settings.test.sh`** covers merge semantics, no permissions by default, the opt-in allow-list union, backup, idempotence, and refusing a non-object file.
+- **`tests/brainstorm-server.test.sh`** checks that the brainstorm companion's `/tmp` session directory is random, owner-only and removed on stop.
 - **`tests/sdd-dryrun.mjs`** runs `sdd-run` with every agent mocked: 20 scenarios covering routing, escalation, adjudication, resume, refs, the ledger, the Devin routing and input guards.
 - **`tests/workflows-dryrun.mjs`** does the same for `review-gate`, `sweep` and `verify-facts`.
 
@@ -186,11 +193,12 @@ Workflow đưa vòng lặp ra khỏi session dài. Mỗi agent bắt đầu vớ
 **Cài đặt:**
 1. Chạy `/plugin marketplace add vanlongme/sdd-orca`, rồi `/plugin install sdd-orca@sdd-orca`.
 2. Tắt plugin superpowers gốc.
-3. Chạy `bash …/scripts/install-settings.sh --dry-run` để xem trước. Bỏ `--dry-run` để ghi (có backup).
+3. Chạy `bash …/scripts/install-settings.sh --dry-run` để xem trước. Bỏ `--dry-run` để ghi (có backup). Settings khuyến nghị không cấp quyền nào.
 
 **Devin:**
 - Yêu cầu rõ "chạy plan bằng Devin".
-- Cần CLI `devin` đã đăng nhập và rule `Bash(sdd-devin:*)`.
+- Cần CLI `devin` đã đăng nhập, và chủ động thêm rule `Bash(sdd-devin:*)` bằng `--with-devin`.
+- Rule này cho phép mọi agent khởi chạy Devin ở chế độ bỏ qua kiểm tra quyền mà không hỏi bạn. Điều đó bao gồm cả agent bị prompt-injection từ nội dung repo hay plan. Chỉ bật trên máy và repo tin cậy, và gỡ rule khi không dùng.
 - Devin chạy với quyền `dangerous` trong worktree, nên luôn dùng worktree.
 - SWE-2 chỉ miễn phí cho gói self-serve đến **15/10/2026**. Sau đó hãy kiểm tra giá trước khi dùng.
 
