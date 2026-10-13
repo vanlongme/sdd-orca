@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+# sdd-devin: run the Devin CLI headless as an SDD implementer, as a detached job.
+#
+#   sdd-devin start --task N --brief FILE --report FILE --constraints FILE --workspace DIR
+#                   [--context FILE] [--findings FILE]          -> prints JOB=<dir>
+#   sdd-devin wait JOB [MAX_SECONDS]                            -> prints RUNNING, or EXIT <code> and the STATUS line
+#   sdd-devin stop JOB
+#
+# Devin's instructions are fixed text in this script. Model-written material (the
+# controller's context, review findings) reaches Devin only as files it is pointed at.
+# Environment:
+#   SDD_DEVIN_MODEL    Devin model id (default swe-2-high)
+#   SDD_DEVIN_MODE     --permission-mode for devin (default dangerous; a headless run cannot answer prompts)
+#   SDD_DEVIN_SANDBOX  1 adds --sandbox
+#   SDD_DEVIN_TIMEOUT  seconds before the job is killed (default 5400)
+#   SDD_DEVIN_BIN      devin executable (default devin)
+set -euo pipefail
+
+die() { echo "sdd-devin: $*" >&2; exit 2; }
+plain() { case "$1" in *$'\n'*|*$'\r'*|'') return 1 ;; esac; }
+abs() { case "$1" in /*) printf '%s' "$1" ;; *) printf '%s/%s' "$PWD" "$1" ;; esac; }
+STATUS_RE='STATUS: *(DONE_WITH_CONCERNS|DONE|BLOCKED|NEEDS_CONTEXT)'
+
+start() {
+  local task='' brief='' report='' constraints='' workspace='' context='' findings=''
+  while [ $# -gt 0 ]; do
+    [ $# -ge 2 ] || die "option $1 needs a value"
+    case "$1" in
+      --task) task=$2 ;;
+      --brief) brief=$2 ;;
+      --report) report=$2 ;;
+      --constraints) constraints=$2 ;;
+      --workspace) workspace=$2 ;;
+      --context) context=$2 ;;
+      --findings) findings=$2 ;;
+      *) die "unknown option: $1" ;;
+    esac
+    shift 2
+  done
+  [[ "$task" =~ ^[0-9]+$ ]] || die "--task must be a task number"
+  for v in brief constraints; do { plain "${!v}" && [ -f "${!v}" ]; } || die "--$v must name an existing file"; done
+  plain "$report" || die "--report must be a path"
+  { plain "$workspace" && [ -d "$workspace" ]; } || die "--workspace must name an existing directory"
+  for v in context findings; do [ -z "${!v}" ] || { plain "${!v}" && [ -f "${!v}" ]; } || die "--$v must name an existing file"; done
+  # Devin runs from the repository root, so every path it is given must be absolute.
+  for v in brief report constraints workspace context findings; do [ -z "${!v}" ] || printf -v "$v" '%s' "$(abs "${!v}")"; done
+
+  local timeout_s=${SDD_DEVIN_TIMEOUT:-5400}
+  [[ "$timeout_s" =~ ^[0-9]+$ ]] || die "SDD_DEVIN_TIMEOUT must be a number of seconds"
+  local bin=${SDD_DEVIN_BIN:-devin}
+  command -v "$bin" >/dev/null 2>&1 || die "devin CLI not found (install it or set SDD_DEVIN_BIN)"
+  local root; root=$(git rev-parse --show-toplevel 2>/dev/null) || die "run from inside the plan's git checkout"
+
+  local n=1; while [ -e "$workspace/devin-task-$task-$n" ]; do n=$((n + 1)); done
+  local job="$workspace/devin-task-$task-$n"
+  mkdir -p "$job"
+
+  local scope="Implement exactly what the brief specifies." report_verb="Write"
+  if [ -n "$findings" ]; then
+    scope="Fix exactly the review findings in $findings, and nothing else."
+    report_verb="Append to"
+  fi
+  {
+    echo "You are implementing Task $task of an implementation plan, as one step of an automated subagent-driven-development run in $root."
+    echo
+    echo "Read your task brief first: $brief"
+    echo "It holds your requirements, with exact values to use verbatim. Binding global constraints are in: $constraints"
+    [ -z "$context" ] || echo "Answers from the run's controller to earlier questions: $context"
+    [ -z "$findings" ] || echo "This is a fix round. Read the report file $report first; it records what was already done and tried."
+    echo
+    echo "Do:"
+    echo "1. $scope Where the brief asks for tests, follow TDD: run the new test and watch it fail, then make it pass."
+    echo "2. Run the focused tests for your change."
+    echo "3. Commit your work on the current branch with a descriptive message. Never commit anything under .superpowers/."
+    echo "4. $report_verb the report file $report: what you implemented, the files changed, the test commands with their output (red and green), and any concerns."
+    echo
+    echo "Rules: stay on the current branch. Never push, rebase, reset --hard, amend or force anything. Never run docker/system prune or other host cleanup. Do not start other agents. Do not edit files outside this repository except the report file."
+    echo
+    echo "End your final message with exactly one line, one of:"
+    echo "STATUS: DONE"
+    echo "STATUS: DONE_WITH_CONCERNS <concern>"
+    echo "STATUS: BLOCKED <reason>"
+    echo "STATUS: NEEDS_CONTEXT <question>"
+  } > "$job/prompt.md"
+
+  local args=(-p --prompt-file "$job/prompt.md" --model "${SDD_DEVIN_MODEL:-swe-2-high}"
+    --permission-mode "${SDD_DEVIN_MODE:-dangerous}" --respect-workspace-trust false
+    --export "$job/conversation.atif")
+  if [ "${SDD_DEVIN_SANDBOX:-0}" = 1 ]; then args+=(--sandbox); fi
+
+  # Detach into a new session so the job outlives the tool call that started it.
+  # Arguments travel positionally; nothing is re-parsed by a shell.
+  setsid nohup bash -c 'job=$2; tmo=$3; cd "$1" || { echo 2 > "$job/exit"; exit 2; }; shift 4
+    timeout "$tmo" "$@" > "$job/out.log" 2> "$job/err.log" < /dev/null
+    echo $? > "$job/exit.tmp" && mv "$job/exit.tmp" "$job/exit"' \
+    sdd-devin "$root" "$job" "$timeout_s" -- "$bin" "${args[@]}" > /dev/null 2>&1 < /dev/null &
+  echo $! > "$job/pid"
+  echo "JOB=$job"
+}
+
+wait_job() {
+  local job=${1-} max=${2:-540}
+  { plain "$job" && [ -f "$job/prompt.md" ]; } || die "not a job directory: $job"
+  [[ "$max" =~ ^[0-9]+$ ]] || die "MAX_SECONDS must be a number"
+  local end=$((SECONDS + max))
+  while [ ! -f "$job/exit" ] && [ "$SECONDS" -lt "$end" ]; do sleep 2; done
+  if [ ! -f "$job/exit" ]; then
+    echo "RUNNING (waited ${max}s; run wait again)"
+    return 0
+  fi
+  echo "EXIT $(cat "$job/exit")"
+  grep -Eo "$STATUS_RE.*" "$job/out.log" 2>/dev/null | tail -n 1 | tr -d '*`' \
+    || echo "STATUS: BLOCKED no STATUS line in Devin output"
+  echo "--- last lines of $job/out.log"
+  tail -n 15 "$job/out.log" 2>/dev/null || true
+  if [ -s "$job/err.log" ]; then
+    echo "--- last lines of $job/err.log"
+    tail -n 10 "$job/err.log"
+  fi
+}
+
+stop_job() {
+  local job=${1-}
+  { plain "$job" && [ -f "$job/pid" ]; } || die "not a job directory: $job"
+  local pid; pid=$(cat "$job/pid")
+  [[ "$pid" =~ ^[0-9]+$ ]] || die "bad pid file"
+  # timeout(1) moves itself into its own process group, so signal the whole session.
+  pkill -TERM -s "$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+  echo "stopped $job"
+}
+
+cmd=${1-}
+[ $# -eq 0 ] || shift
+case "$cmd" in
+  start) start "$@" ;;
+  wait) wait_job "$@" ;;
+  stop) stop_job "$@" ;;
+  *) sed -n '2,7p' "$0" >&2; exit 2 ;;
+esac

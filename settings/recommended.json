@@ -1,0 +1,13 @@
+{
+  "autoCompactWindow": 400000,
+  "workflowSizeGuideline": "medium",
+  "env": {
+    "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5-5",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-5-5",
+    "CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS": "4"
+  },
+  "permissions": {
+    "allow": ["Bash(sdd-devin:*)"]
+  }
+}

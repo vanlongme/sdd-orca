@@ -1,0 +1,7 @@
+# SDD run workspaces and local scratch
+.superpowers/
+node_modules/
+*.log
+.DS_Store
+# usage-analysis output can contain private transcript details
+tools/usage/*.json

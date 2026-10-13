@@ -1,0 +1,197 @@
+# sdd-orca
+
+A Claude Code plugin for spending fewer tokens on agentic coding. It contains:
+
+- **The [superpowers](https://github.com/obra/superpowers) skills (6.4.1), forked.** `subagent-driven-development` now starts a single **Workflow** run in place of the manual implementer/reviewer loop in your main session.
+- **Four workflows:**
+  - `sdd-run`: execute an implementation plan;
+  - `review-gate`: verified review of a commit range;
+  - `sweep`: one task over many directories;
+  - `verify-facts`: check claims against official sources.
+- **An optional Devin CLI implementer.** Cheap tasks can run on Devin; reviews stay on Claude.
+- **Recommended settings**, plus an installer that merges them into your user settings.
+- **Usage analysis scripts** for your own `~/.claude/projects` transcripts.
+
+> Vietnamese summary below. / Tóm tắt tiếng Việt ở cuối trang.
+
+## Why
+
+The author measured their own Claude Code usage over seven weeks (API-equivalent cost, cache reads included):
+
+- **80%** of cost was the main session loop. Subagents were only 20%.
+- About **60%** of cost was cache reads. Every turn re-reads the whole context, and the median main-loop context was ~315k tokens.
+- About **15%** of main-loop cost was polling: `sleep`, reading task output, and wake-ups on task notifications.
+- Sessions that coordinated an external coding agent (Devin through an orchestrator) were about **37%** of Claude usage. About a third of their calls were status checks made at 390–570k context.
+
+The fix is structural: move the loop out of the long-lived session. A Workflow script runs the per-task agents. Each agent starts fresh with a small context and gets a model sized to the task. Your session starts the run once and reads one compact result.
+
+## Install
+
+```text
+/plugin marketplace add vanlongme/sdd-orca
+/plugin install sdd-orca@sdd-orca
+```
+
+If you also have upstream `superpowers` installed, disable it (`/plugin` → superpowers → disable). Otherwise both plugins inject their SessionStart context. While both are enabled, a bundled `PreToolUse` hook still redirects `superpowers:subagent-driven-development` to the sdd-orca skill.
+
+Recommended settings (optional; this backs up your file first, and `--dry-run` previews the merge):
+
+```bash
+bash ~/.claude/plugins/marketplaces/sdd-orca/scripts/install-settings.sh --dry-run
+bash ~/.claude/plugins/marketplaces/sdd-orca/scripts/install-settings.sh            # add --no-devin to skip the Devin allow rule
+```
+
+The merge (`settings/recommended.json`) sets these values and keeps everything else:
+
+| Setting | Value | Why |
+|---|---|---|
+| `autoCompactWindow` | `400000` | compact long sessions before cache reads dominate |
+| `workflowSizeGuideline` | `medium` | keep workflows under ~10 agents unless asked |
+| `CLAUDE_CODE_SUBAGENT_MODEL` | `sonnet` | default subagent model; workflows still pick per step |
+| `ANTHROPIC_DEFAULT_SONNET_MODEL` / `..._HAIKU_MODEL` | `claude-sonnet-5-5` / `claude-haiku-5-5` | pin the aliases the workflows use |
+| `CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS` | `4` | bound parallel agents (and rate-limit bursts) |
+| `permissions.allow` | `Bash(sdd-devin:*)` | lets workflow agents start the Devin wrapper (unioned, never replaces your list) |
+
+Requirements:
+- Claude Code with the Workflow tool;
+- `git`, `jq` and `bash`;
+- `node` ≥ 18 for the tests;
+- for Devin, the `devin` CLI, logged in.
+
+## Use
+
+### Plans (`sdd-run`)
+
+Write a plan with `sdd-orca:writing-plans` and choose **Subagent-driven**, or ask Claude to execute an existing plan. The `sdd-orca:subagent-driven-development` skill then:
+
+1. sets up a worktree;
+2. starts the `sdd-orca:sdd-run` workflow once;
+3. waits without polling;
+4. reports from the result.
+
+Inside the workflow, for each task, in order:
+
+- **Preflight.** Conflict scan, task briefs and a ledger in `.superpowers/sdd/<plan>/`.
+- **Implement.** The implementer depends on the task's tier: transcribe → haiku, integrate → sonnet, design → opus. Devin is optional.
+- **Review.** A spec + quality review (sonnet; opus for design tasks), with commit ranges named by private refs `refs/sdd/<plan>/…`. No SHA ever passes through a model.
+- **Fix.** Up to 3 fix rounds; the last round goes one model tier up.
+- **Adjudicate.** An opus adjudicator decides findings that the plan itself mandates, and findings that hit the round cap. Each decision becomes a `Ruling:` line in the ledger.
+
+After the last task, one whole-branch review, one fix wave and your verify command (for example `make check`) run once.
+
+Rerunning the same plan resumes: tasks already marked complete in the ledger are skipped.
+
+Arguments: `plan`, `cwd`, `base`, `spec`, `verify`, `implementer` (`claude`|`devin`), `implModel`, `maxFixRounds`, `only`, `from`. See the skill for the full table.
+
+### The other workflows
+
+You opt in by typing the slash command:
+
+```text
+/sdd-orca:review-gate main                     # finders per dimension (sonnet) + adversarial verifier per finding (opus)
+/sdd-orca:review-gate {"base":"main","preset":"multi-tenant"}
+/sdd-orca:sweep {"items":["services/a","services/b"],"task":"check README drift","mode":"report"}
+/sdd-orca:verify-facts {"claims":["Go 1.26 is the current stable release"]}
+```
+
+- `review-gate` returns only the findings that survive verification. Refuted findings, and findings left unverified by the cap, are reported separately, never dropped.
+- `sweep` has two modes:
+  - **report**: reads items in parallel, then produces one synthesis;
+  - **edit**: one commit per item, in sequence, stopping at the first blocked item.
+- `verify-facts` gives each claim a verdict, with URLs and quotes.
+
+## Devin as the implementer (optional)
+
+Ask for it explicitly, for example "execute this plan with Devin". The run then works like this:
+
+- **Devin's share.** Transcribe- and integrate-tier tasks, and their early fix rounds, go to the Devin CLI.
+- **Claude's share.** Design-tier tasks, the escalated last fix round, every review and the final fix wave stay on Claude.
+- **The wrapper.** A haiku agent drives `bin/sdd-devin` (on the Bash PATH while the plugin is enabled). It:
+  1. writes Devin's prompt from fixed text, passing model-written context and findings only as file paths;
+  2. runs `devin -p` as a detached job with a timeout;
+  3. waits on the job in bounded steps.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SDD_DEVIN_MODEL` | `swe-2-high` | Devin model |
+| `SDD_DEVIN_MODE` | `dangerous` | `--permission-mode`. A headless run cannot answer permission prompts. |
+| `SDD_DEVIN_SANDBOX` | `0` | `1` adds `--sandbox` |
+| `SDD_DEVIN_TIMEOUT` | `5400` | seconds before the job is killed |
+
+**Risks you accept:**
+- Devin runs with its permission checks bypassed in your worktree, so use a worktree, not your main checkout.
+- The `Bash(sdd-devin:*)` allow rule lets any agent in your sessions start Devin through this wrapper. Without the rule, Claude Code's auto mode refuses to let an agent launch another coding agent.
+
+**Pricing:** check your Devin plan before you rely on it. Devin's docs state that SWE-2 is free for self-serve plans only through **2026-10-15**, with per-token pricing afterwards. Under a Claude Max plan, the default Claude haiku/sonnet implementers add no extra cost.
+
+## Verification
+
+```bash
+bash tests/run.sh
+```
+
+- **`tests/sdd-devin.test.sh`** (43 checks) runs the wrapper against a fake `devin` in a throwaway git repo. It covers:
+  - input validation;
+  - argv and prompt contents;
+  - relative paths;
+  - the STATUS contract;
+  - non-zero exit, timeout, `RUNNING`, and `stop` killing the whole session.
+- **`tests/hooks.test.sh`** covers the redirect hook (deny shape, pass-through cases, fail-open, `SDD_MANUAL=1`) and the SessionStart output.
+- **`tests/install-settings.test.sh`** covers merge semantics, the allow-list union, backup, idempotence, and refusing a non-object file.
+- **`tests/sdd-dryrun.mjs`** runs `sdd-run` with every agent mocked: 20 scenarios covering routing, escalation, adjudication, resume, refs, the ledger, the Devin routing and input guards.
+- **`tests/workflows-dryrun.mjs`** does the same for `review-gate`, `sweep` and `verify-facts`.
+
+The mocks prove the control flow, not model behaviour. `sdd-run` itself was run live twice on a small throwaway plan, with 13 agents per run, a clean ledger and verify passing. The Devin path has been tested only against the fake CLI.
+
+## Usage analysis (optional)
+
+`tools/usage/` holds the read-only scripts behind the numbers above. They read your local transcripts and price them at API-equivalent rates:
+
+```bash
+python3 -I tools/usage/analyze.py ~/.claude/projects /tmp/usage.json
+python3 -I tools/usage/report.py /tmp/usage.json      # also report2.py, report3.py
+```
+
+Keep the output private; it summarizes your own sessions.
+
+## Credits
+
+- Forked from [obra/superpowers](https://github.com/obra/superpowers) 6.4.1 by Jesse Vincent, under the MIT license. See [NOTICE.md](NOTICE.md) for exactly what changed.
+- The manual SDD loop is preserved at `skills/subagent-driven-development/manual-loop.md`.
+
+License: MIT ([LICENSE](LICENSE)).
+
+---
+
+## Tiếng Việt
+
+**sdd-orca** là plugin Claude Code giúp giảm token khi lập trình bằng agent:
+
+- **Bộ skill superpowers (fork).** `subagent-driven-development` không còn chạy vòng implementer/reviewer thủ công trong session chính nữa, mà khởi chạy **một lần** workflow `sdd-run`.
+- **Bốn workflow:**
+  - `sdd-run`: chạy plan;
+  - `review-gate`: review có kiểm chứng;
+  - `sweep`: chạy một việc trên nhiều thư mục;
+  - `verify-facts`: kiểm chứng thông tin bằng nguồn chính thức.
+- **Devin CLI tùy chọn** làm implementer cho task rẻ.
+- **Bộ settings khuyến nghị**, kèm script cài đặt.
+
+**Lý do (số liệu đo thật):**
+- **80%** chi phí nằm ở vòng lặp session chính.
+- **~15%** chi phí là polling.
+- Các session điều phối Devin chiếm **~37%** usage Claude.
+
+Workflow đưa vòng lặp ra khỏi session dài. Mỗi agent bắt đầu với context nhỏ và chạy model vừa đủ cho task.
+
+**Cài đặt:**
+1. Chạy `/plugin marketplace add vanlongme/sdd-orca`, rồi `/plugin install sdd-orca@sdd-orca`.
+2. Tắt plugin superpowers gốc.
+3. Chạy `bash …/scripts/install-settings.sh --dry-run` để xem trước. Bỏ `--dry-run` để ghi (có backup).
+
+**Devin:**
+- Yêu cầu rõ "chạy plan bằng Devin".
+- Cần CLI `devin` đã đăng nhập và rule `Bash(sdd-devin:*)`.
+- Devin chạy với quyền `dangerous` trong worktree, nên luôn dùng worktree.
+- SWE-2 chỉ miễn phí cho gói self-serve đến **15/10/2026**. Sau đó hãy kiểm tra giá trước khi dùng.
+
+**Kiểm thử:** chạy `bash tests/run.sh`.

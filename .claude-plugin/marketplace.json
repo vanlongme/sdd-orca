@@ -1,0 +1,20 @@
+{
+  "name": "sdd-orca",
+  "description": "Marketplace for the sdd-orca plugin",
+  "owner": {
+    "name": "vanlongme",
+    "url": "https://github.com/vanlongme"
+  },
+  "plugins": [
+    {
+      "name": "sdd-orca",
+      "description": "Token-lean subagent-driven development: superpowers skills fork, sdd-run / review-gate / sweep / verify-facts workflows, optional Devin CLI implementer",
+      "version": "0.1.0",
+      "source": "./",
+      "author": {
+        "name": "vanlongme",
+        "url": "https://github.com/vanlongme"
+      }
+    }
+  ]
+}

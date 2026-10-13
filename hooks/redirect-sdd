@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# PreToolUse hook (matcher: Skill). When upstream superpowers is still enabled next to
+# sdd-orca, redirects model-initiated loads of superpowers:subagent-driven-development
+# to sdd-orca:subagent-driven-development, which runs the plan as the sdd-run workflow.
+# SDD_MANUAL=1 in the environment disables the redirect. Fails open: any parsing
+# problem leaves the tool call to the normal permission flow.
+[ "${SDD_MANUAL:-}" = "1" ] && exit 0
+command -v jq >/dev/null 2>&1 || exit 0
+skill=$(jq -r 'if .tool_name == "Skill" then (.tool_input.skill // "") else "" end' 2>/dev/null) || exit 0
+case "$skill" in
+  superpowers:subagent-driven-development)
+    jq -n '{hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: "The sdd-orca plugin replaces this skill: plans run through the sdd-orca:sdd-run workflow instead of the manual loop. Invoke the Skill tool with skill \"sdd-orca:subagent-driven-development\" now and follow it. Start Claude Code with SDD_MANUAL=1 to use the upstream manual loop instead."
+    }}'
+    ;;
+esac
+exit 0
