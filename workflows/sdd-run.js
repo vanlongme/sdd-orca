@@ -4,8 +4,8 @@ export const meta = {
   whenToUse: 'Called by the sdd-orca:subagent-driven-development skill. args: {plan: "<plan .md>", base?: "main", cwd?: "<worktree path>", spec?: "<spec .md>", verify?: "make check", implementer?: "claude"|"devin", implModel?: "auto"|"haiku"|"sonnet"|"opus", only?: [2, 3], from?: 3, maxFixRounds?: 3, fixFinal?: true, sddDir?: "<skill dir>"}. Tasks run sequentially on the current branch, each committed, never pushed.',
   phases: [
     { title: 'Preflight', detail: 'workspace + ledger, task list + tiers, conflict scan, per-task briefs (opus, medium)' },
-    { title: 'Implement', detail: 'tiered implementer (haiku / sonnet; design tasks on sonnet at high effort) or Devin CLI; escalations and the last fix round go one tier up, to opus at most' },
-    { title: 'Review', detail: 'task review for spec + quality (sonnet; opus for design tasks), scoped re-reviews' },
+    { title: 'Implement', detail: 'tiered implementer (haiku / sonnet / opus at high effort for design tasks) or Devin CLI; escalations and the last fix round go one tier up' },
+    { title: 'Review', detail: 'task review for spec + quality (sonnet; opus at xhigh effort for design tasks), scoped re-reviews' },
     { title: 'Adjudicate', detail: 'resolve NEEDS_CONTEXT/BLOCKED and findings still open at the cap (opus)' },
     { title: 'Final', detail: 'whole-branch review (opus, high) + one fix wave + one re-review' },
     { title: 'Verify', detail: 'run the verify command exactly once' },
@@ -55,8 +55,8 @@ const ask = (prompt, opts) => agent(ROLE + WHERE + prompt, opts)
 
 const RULES = 'Rules: stay on the current branch; never push, rebase, reset --hard, amend, or force anything. Never run docker/system prune or other host cleanup; if disk or resources run short, report BLOCKED with that reason. Never dispatch subagents. Run the focused tests for your change; one full verification runs at the end of the plan.'
 const MARK = ref => `Bookkeeping exception to read-only: first run \`git update-ref ${ref} HEAD\`. It is a private ref the workflow uses to name this commit range; it moves no branch and not HEAD.`
-// Design tasks run on Sonnet at high effort; Opus is reserved for escalations, the last fix round and the judgment roles.
-const TIER_MODEL = { transcribe: 'haiku', integrate: 'sonnet', design: 'sonnet' }
+// Design tasks implement on Opus at high effort, and their reviews run on Opus at xhigh.
+const TIER_MODEL = { transcribe: 'haiku', integrate: 'sonnet', design: 'opus' }
 const TIER_EFFORT = { transcribe: 'medium', integrate: 'medium', design: 'high' }
 const UP = { haiku: 'sonnet', sonnet: 'opus', opus: 'opus' }
 
@@ -233,6 +233,7 @@ const deferred = []
 for (const t of tasks) {
   const tierModel = IMPL_MODEL === 'auto' ? TIER_MODEL[t.tier] : IMPL_MODEL
   const reviewModel = t.tier === 'design' ? 'opus' : 'sonnet'
+  const reviewEffort = t.tier === 'design' ? 'xhigh' : 'medium'
   const baseRef = cur
   const lines = []
 
@@ -271,7 +272,7 @@ for (const t of tasks) {
 - BASE_SHA: ${baseRef}  HEAD_SHA: ${cur}
 - DIFF_FILE: run \`bash ${SDD}/scripts/review-package ${PLAN} ${baseRef} ${cur}\` and read the path it prints.
 ${impl.status === 'DONE_WITH_CONCERNS' ? `The implementer flagged concerns: ${impl.concerns}\n` : ''}Return your verdicts in the structured fields: specOk, approved, every issue with severity and file:line (mark plan-mandated ones), and the ⚠️ items you could not verify from the diff.`,
-    { label: `review:${t.n}`, phase: 'Review', model: reviewModel, effort: 'medium', schema: REVIEW })
+    { label: `review:${t.n}`, phase: 'Review', model: reviewModel, effort: reviewEffort, schema: REVIEW })
   if (!review) { stopped = { task: t.n, reason: 'reviewer returned nothing' }; results.push({ n: t.n, status: 'review-missing' }); break }
 
   let open = blocking(review.issues)

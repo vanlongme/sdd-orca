@@ -95,8 +95,8 @@ Write a plan with `sdd-orca:writing-plans` and choose **Subagent-driven**, or as
 Inside the workflow, for each task, in order:
 
 - **Preflight.** Conflict scan, task briefs and a ledger in `.superpowers/sdd/<plan>/`.
-- **Implement.** The implementer depends on the task's tier: transcribe → haiku, integrate → sonnet, design → sonnet at high effort. Opus implements only when a task is escalated (BLOCKED, or the last fix round). Pass `implModel: "opus"` to force it. Devin is optional.
-- **Review.** A spec + quality review (sonnet; opus for design tasks), with commit ranges named by private refs `refs/sdd/<plan>/…`. No SHA ever passes through a model.
+- **Implement.** The implementer depends on the task's tier: transcribe → haiku, integrate → sonnet, design → opus at high effort. An escalated task (BLOCKED, or the last fix round) goes one tier up. Pass `implModel` to force one model. Devin is optional.
+- **Review.** A spec + quality review (sonnet; opus at xhigh effort for design tasks), with commit ranges named by private refs `refs/sdd/<plan>/…`. No SHA ever passes through a model.
 - **Fix.** Up to 3 fix rounds; the last round goes one model tier up.
 - **Adjudicate.** An opus adjudicator decides findings that the plan itself mandates, and findings that hit the round cap. Each decision becomes a `Ruling:` line in the ledger.
 
@@ -123,6 +123,25 @@ You opt in by typing the slash command:
   - **edit**: one commit per item, in sequence, stopping at the first blocked item.
 - `verify-facts` gives each claim a verdict, with URLs and quotes.
 
+## Workflow agents in Orca tabs
+
+Claude Code runs workflow subagents inside its own process, so [Orca](https://github.com/stablyai/orca) never sees them as agents. When the Orca runtime is reachable, the plugin's `orca-tabs` hook gives each workflow subagent its own Orca terminal tab instead:
+
+- **Opening.** On `SubagentStart` it opens a tab titled with the workflow label and model, for example `sdd review:3 · opus`. The tab goes in the checkout the agent works in, or under the repository's main checkout when Orca does not manage that worktree.
+- **What the tab shows.** The tab records its Orca pane identity, then shows the agent's transcript live: the task, each tool call and the result.
+- **Status in Orca.** The agent's later hook events (tool use, permission requests, stop) are passed to Orca's own Claude hook under the tab's identity. Orca therefore tracks every agent separately, with its own status.
+- **Closing.** When the agent stops, the tab title gets a ✓, the outcome line is printed, and the tab closes after `SDD_ORCA_TAB_LINGER` seconds.
+- **Cost.** Nothing calls a model, so the tabs cost no tokens. The hooks run async and never block an agent.
+- **Safety.** Control characters are stripped from the transcript before it reaches the terminal. The tab's pane identity is kept owner-only under `~/.local/state/sdd-orca/tabs/` and removed when the agent stops.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SDD_ORCA_TABS` | `workflow` | `workflow`: workflow subagents; `all`: every subagent; `0`: off |
+| `SDD_ORCA_TAB_LINGER` | `120` | seconds a finished agent's tab stays open; `keep` never closes it |
+| `SDD_ORCA_TABS_SKIP` | `^(devin\|ledger):` | regex of workflow labels that get no tab: Devin drivers (Devin has its own tab) and ledger bookkeeping; empty skips none |
+
+Set them in the `env` block of your Claude Code settings. Devin jobs need none of this: `sdd-devin` already runs Devin in an Orca terminal, so Orca's own Devin hook reports it.
+
 ## Devin as the implementer (optional)
 
 Ask for it explicitly, for example "execute this plan with Devin". The run then works like this:
@@ -135,7 +154,8 @@ Ask for it explicitly, for example "execute this plan with Devin". The run then 
   3. waits on the job in bounded steps.
 - **Watching in Orca.** When the [Orca](https://github.com/stablyai/orca) desktop runtime is reachable, each job opens Devin's interactive TUI in an Orca terminal tab of the worktree, titled `sdd task N #k`. You watch it live and can type guidance into it. Without Orca, `devin -p` runs as a detached background job.
 - **How a job ends.** Devin ends the job by writing its `STATUS:` line to `<job>/status`. The wrapper then stops the idle TUI and renames the tab with the outcome; the tab stays open for review. If Devin sits idle with no status, it gets one nudge; if it then stays idle, the job is reported `BLOCKED`.
-- **Repository registration.** The wrapper registers the repository in Orca if Orca does not know it yet.
+- **Repository registration.** The wrapper registers the repository in Orca if Orca does not know it yet. Orca does not see a worktree made with plain `git worktree add`, so such a job's tab opens under the main checkout; Devin still works in the worktree.
+- **Status in Orca.** The tab is an Orca terminal, so Orca's own Devin hook reports the running job as a Devin agent.
 - **What reaches the shell.** The only text typed into the tab's shell is `bash '<job>/run.sh'`. Paths containing control characters are rejected outright. Paths containing quote, escape or expansion characters run detached instead.
 
 | Variable | Default | Meaning |
@@ -165,15 +185,16 @@ Setup: `bash …/scripts/install-settings.sh --with-devin` adds the allow rule `
 bash tests/run.sh
 ```
 
-- **`tests/sdd-devin.test.sh`** (77 checks) runs the wrapper against a fake `devin` and a fake `orca` in a throwaway git repo. It covers:
+- **`tests/sdd-devin.test.sh`** (80 checks) runs the wrapper against a fake `devin` and a fake `orca` in a throwaway git repo. It covers:
   - input validation, and that no environment variable can swap in another executable;
-  - Orca mode: repository registration, tab creation, interactive mode, the status file, the nudge, giving up, stop, and the fallback to detached mode;
+  - Orca mode: repository registration, tab creation (under the main checkout for a worktree Orca does not manage), interactive mode, the status file, the nudge, giving up, stop, and the fallback to detached mode;
   - that no path with control or shell-quoting characters is ever typed into an Orca shell;
   - argv and prompt contents;
   - relative paths;
   - the STATUS contract;
   - non-zero exit, timeout, `RUNNING`, and `stop` killing the whole session.
-- **`tests/hooks.test.sh`** covers the redirect hook (deny shape, pass-through cases, fail-open, `SDD_MANUAL=1`) and the SessionStart output.
+- **`tests/hooks.test.sh`** covers the redirect hook (deny shape, pass-through cases, fail-open, `SDD_MANUAL=1`), the SessionStart output and the hook registrations.
+- **`tests/orca-tabs.test.sh`** (31 checks) runs the Orca tab hook and its viewer against a fake `orca` and a fake Orca agent hook. It covers which agents get a tab, the off switch, skipped labels, unsafe agent ids, Orca being down, the tab's checkout and title, reporting under the tab's pane and never the session's, the rewritten events, escape stripping, closing and cleanup, and the main-checkout fallback.
 - **`tests/install-settings.test.sh`** (41 checks) covers:
   - merge semantics;
   - no permissions by default;
@@ -186,7 +207,7 @@ bash tests/run.sh
 - **`tests/sdd-dryrun.mjs`** runs `sdd-run` with every agent mocked: 22 scenarios covering routing, escalation, adjudication, resume, refs, the ledger, the Devin routing and input guards.
 - **`tests/workflows-dryrun.mjs`** does the same for `review-gate`, `sweep` and `verify-facts`.
 
-The mocks prove the control flow, not model behaviour. `sdd-run` itself was run live twice on a small throwaway plan, with 13 agents per run, a clean ledger and verify passing. The Devin path has been tested only against the fake CLI.
+The mocks prove the control flow, not model behaviour. `sdd-run` itself was run live twice on a small throwaway plan, with 13 agents per run, a clean ledger and verify passing. The Orca tabs were run live with one and with two parallel workflow agents: each tab was recognised by Orca as a Claude agent, then closed and cleaned up. A live Devin job in a worktree opened its Orca tab, was recognised as a Devin agent and committed.
 
 ## Usage analysis (optional)
 
@@ -252,7 +273,13 @@ Workflow đưa vòng lặp ra khỏi session dài. Mỗi agent bắt đầu vớ
 - Cần CLI `devin` đã đăng nhập, và chủ động thêm rule `Bash(sdd-devin:*)` bằng `--with-devin`.
 - Rule này cho phép mọi agent khởi chạy Devin ở chế độ bỏ qua kiểm tra quyền mà không hỏi bạn. Điều đó bao gồm cả agent bị prompt-injection từ nội dung repo hay plan. Chỉ bật trên máy và repo tin cậy, và gỡ rule khi không dùng.
 - Devin chạy với quyền `dangerous` trong worktree, nên luôn dùng worktree.
-- Khi Orca đang chạy, mỗi job Devin mở TUI trong một tab Orca của worktree (`sdd task N #k`). Bạn xem trực tiếp và có thể gõ hướng dẫn cho Devin.
+- Khi Orca đang chạy, mỗi job Devin mở TUI trong một tab Orca của worktree (`sdd task N #k`). Bạn xem trực tiếp và có thể gõ hướng dẫn cho Devin. Orca nhận tab đó là agent Devin nhờ hook có sẵn của Orca.
+
+**Agent của workflow trong Orca:** khi Orca đang chạy, hook `orca-tabs` mở cho mỗi subagent của workflow một tab Orca riêng (ví dụ `sdd review:3 · opus`).
+- Tab hiện transcript trực tiếp.
+- Các event hook của agent được gửi qua hook Claude của Orca bằng identity của tab, nên Orca theo dõi trạng thái từng agent riêng.
+- Không gọi model nào nên không tốn token.
+- Tab tự đóng sau `SDD_ORCA_TAB_LINGER` giây (mặc định 120). Tắt bằng `SDD_ORCA_TABS=0`.
 - SWE-2 chỉ miễn phí cho gói self-serve đến **15/10/2026**. Sau đó hãy kiểm tra giá trước khi dùng.
 
 **Kiểm thử:** chạy `bash tests/run.sh`.

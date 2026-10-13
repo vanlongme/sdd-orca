@@ -39,17 +39,25 @@ orca_reachable() {
     && orca status --json 2>/dev/null | jq -e '.result.runtime.reachable == true' >/dev/null 2>&1
 }
 
-# Creates the Orca tab running CMD in worktree ROOT; prints the terminal handle.
+# Creates the Orca tab running CMD for worktree ROOT; prints the terminal handle. Orca knows
+# only the checkouts registered with it or created through it, so a worktree made with plain
+# git gets its tab under the repository's main checkout (CMD changes into ROOT itself).
 orca_tab() {
-  local root=$1 title=$2 cmd=$3 out
-  out=$(orca terminal create --worktree "path:$root" --title "$title" --command "$cmd" --json 2>/dev/null || true)
-  if [ "$(jq -r '.error.code // empty' <<<"$out" 2>/dev/null)" = selector_not_found ] && [ "${SDD_DEVIN_ORCA_ADD_REPO:-1}" = 1 ]; then
+  local root=$1 title=$2 cmd=$3 out main
+  main=$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+  main=${main%/.git}
+  tab_create() { orca terminal create --worktree "path:$1" --title "$title" --command "$cmd" --json 2>/dev/null || true; }
+  tab_unknown() { [ "$(jq -r '.error.code // empty' <<<"$out" 2>/dev/null)" = selector_not_found ]; }
+  out=$(tab_create "$root")
+  if tab_unknown && [ "$main" != "$root" ]; then
+    out=$(tab_create "$main")
+    tab_unknown || echo "sdd-devin: Orca does not manage $root; the tab opens under $main" >&2
+  fi
+  if tab_unknown && [ "${SDD_DEVIN_ORCA_ADD_REPO:-1}" = 1 ]; then
     # Orca does not know this repository yet: register its main checkout, then retry.
-    local main; main=$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
-    main=${main%/.git}
     orca repo add --path "$main" --json >/dev/null 2>&1 || return 1
     echo "sdd-devin: registered $main in Orca so the job can be watched" >&2
-    out=$(orca terminal create --worktree "path:$root" --title "$title" --command "$cmd" --json 2>/dev/null || true)
+    out=$(tab_create "$main")
   fi
   jq -er '.result.terminal.handle // empty' <<<"$out" 2>/dev/null
 }

@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Runs in the Orca tab that orca-tabs opens for one subagent: records the tab's Orca pane
+# identity for orca-tabs, then shows the agent's transcript until the agent stops.
+#   orca-tab-view STATE_DIR   -> exits 0 when the tab should close
+# Everything runs inside main, so bash has parsed the whole file before it starts: a plugin
+# update that rewrites this file cannot break a viewer that is already running.
+main() {
+sd=${1-}
+case "$sd" in */sdd-orca/tabs/*) ;; *) echo "orca-tab-view: not an sdd-orca tab directory: $sd" >&2; exit 1 ;; esac
+[ -d "$sd" ] || { echo "orca-tab-view: no state directory: $sd" >&2; exit 1; }
+umask 077
+for k in ORCA_PANE_KEY ORCA_TAB_ID ORCA_WORKTREE_ID ORCA_AGENT_LAUNCH_TOKEN ORCA_AGENT_HOOK_ENV ORCA_AGENT_HOOK_VERSION ORCA_AGENT_HOOK_TRANSPORT ORCA_AGENT_HOOK_ENDPOINT ORCA_AGENT_HOOK_PORT ORCA_AGENT_HOOK_TOKEN; do
+  v=${!k-}; case "$v" in *$'\n'*) v='' ;; esac
+  printf '%s=%s\n' "$k" "$v"
+done > "$sd/env.tmp" && mv "$sd/env.tmp" "$sd/env"
+
+title=$(cat "$sd/title" 2>/dev/null)
+tp=$(cat "$sd/transcript" 2>/dev/null)
+linger=$(cat "$sd/linger" 2>/dev/null)
+# The shell set its own title before running this; put the agent's back.
+printf '\033]0;%s\007' "$title"
+echo "== $title"
+[ -z "$tp" ] || echo "   transcript: $tp"
+echo
+
+# One line per step; control characters are removed so the transcript cannot drive the terminal.
+FILTER='
+def clean: gsub("[\u0000-\u0008\u000b-\u001f\u007f-\u009f]"; "");
+def short($n): if length > $n then .[0:$n] + "…" else . end;
+def one: tostring | clean | gsub("\\s+"; " ");
+def at: (.timestamp // "" | tostring | sub("\\.[0-9]+Z$"; "Z") | try (fromdateiso8601 | strflocaltime("%H:%M:%S ")) catch "");
+fromjson? | select((.type == "assistant" or .type == "user") and (.isMeta | not)) | at as $at
+| (.message.content) as $c
+| if .type == "assistant" then
+    $c[]? | if .type == "text" then (.text | clean | short(1500))
+            elif .type == "tool_use" then $at + "▸ " + .name + ": " + ((.input.description // .input.command // .input.file_path // .input.pattern // .input.prompt // .input) | one | short(200))
+            else empty end
+  elif ($c | type) == "string" then "── task ──\n" + ($c | clean | short(1500)) + "\n──"
+  else $c[]? | select(.type == "tool_result")
+    | "    ↳ " + ((.content | if type == "array" then map(.text? // "") | join(" ") else . end) | one | short(160)) + (if .is_error then "  [error]" else "" end)
+  end'
+
+if [ -n "$tp" ]; then
+  for _ in $(seq 1 60); do [ -e "$tp" ] && break; sleep 0.5; done
+  ( tail -n +1 -F "$tp" 2>/dev/null | jq -R --unbuffered -r "$FILTER" ) &
+  follower=$!
+fi
+# Wait for the agent to stop; give up on a transcript that has not changed for an hour.
+while [ -d "$sd" ] && [ ! -e "$sd/done" ]; do
+  sleep 1
+  [ -n "$tp" ] && [ -n "$(find "$tp" -mmin +60 2>/dev/null)" ] && break
+done
+sleep 1
+if [ -n "${follower-}" ]; then pkill -P "$follower" 2>/dev/null; kill "$follower" 2>/dev/null; fi
+echo
+echo "── finished: $(cat "$sd/done" 2>/dev/null || echo 'no stop event')"
+rm -rf "$sd"
+[ "$linger" = keep ] && { echo "(this tab stays open)"; exit 3; }
+[[ "$linger" =~ ^[0-9]+$ ]] || linger=120
+[ "$linger" = 0 ] || { echo "(this tab closes in ${linger}s)"; sleep "$linger"; }
+exit 0
+}
+main "$@"; exit

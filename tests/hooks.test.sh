@@ -36,6 +36,9 @@ check "uses the sdd-orca namespace" contains "$ctx" "sdd-orca:using-superpowers"
 echo "hooks.json"
 check "is valid JSON" valid < "$H/hooks.json"
 check "registers the Skill matcher" test "$(jq -r '.hooks.PreToolUse[0].matcher' "$H/hooks.json")" = Skill
-check "hook scripts are executable" test -x "$H/redirect-sdd" -a -x "$H/session-start" -a -x "$H/run-hook.cmd"
+check "hook scripts are executable" test -x "$H/redirect-sdd" -a -x "$H/session-start" -a -x "$H/run-hook.cmd" -a -x "$H/orca-tabs" -a -x "$H/orca-tab-view"
+for e in SubagentStart SubagentStop PreToolUse PostToolUse PostToolUseFailure PermissionRequest; do
+  check "runs orca-tabs async on $e" test "$(jq -r --arg e "$e" '[.hooks[$e][].hooks[] | select(.command | endswith(" orca-tabs")) | .async] | . == [true]' "$H/hooks.json")" = true
+done
 
 finish

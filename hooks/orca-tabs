@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+# Gives each workflow subagent its own Orca terminal tab, so Orca tracks it as an agent.
+#
+# On SubagentStart it opens a tab in the checkout the agent works in. The tab records its
+# Orca pane identity and shows the agent's transcript live (orca-tab-view). The agent's
+# later hook events (tool use, stop) are then passed to Orca's own Claude hook under that
+# identity, so Orca shows the agent's status on its tab. No model is called.
+#
+# Environment:
+#   SDD_ORCA_TABS        workflow (default): workflow subagents; all: every subagent; 0: off
+#   SDD_ORCA_TAB_LINGER  seconds a finished agent's tab stays open (default 120; keep: never close)
+#   SDD_ORCA_TABS_SKIP   regex of workflow labels that get no tab (default ^(devin|ledger):; empty: none)
+# Runs as an async hook: it always exits 0 and prints nothing.
+set -u
+payload=$(cat 2>/dev/null) || exit 0
+case "$payload" in *'"agent_id"'*) ;; *) exit 0 ;; esac
+mode=${SDD_ORCA_TABS:-workflow}
+case "$mode" in workflow|all) ;; *) exit 0 ;; esac
+command -v jq >/dev/null 2>&1 && command -v orca >/dev/null 2>&1 || exit 0
+orca_hook=$HOME/.orca/agent-hooks/claude-hook.sh
+[ -r "$orca_hook" ] || exit 0
+
+eval "$(jq -r '@sh "ev=\(.hook_event_name // "") aid=\(.agent_id // "") atype=\(.agent_type // "") cwd=\(.cwd // "") tp=\(.transcript_path // "")"' <<<"$payload" 2>/dev/null)" || exit 0
+[[ "$aid" =~ ^[A-Za-z0-9_-]{1,64}$ ]] || exit 0
+[ "$mode" = all ] || [ "$atype" = workflow-subagent ] || exit 0
+
+base=${XDG_STATE_HOME:-$HOME/.local/state}/sdd-orca/tabs
+sd=$base/$aid
+here=$(cd "$(dirname "$0")" && pwd)
+# One stable session id per agent, so Orca does not merge it with the parent session.
+h=$(printf %s "$aid" | md5sum | cut -c1-32)
+sid="${h:0:8}-${h:8:4}-4${h:13:3}-8${h:17:3}-${h:20:12}"
+IDENTITY='ORCA_PANE_KEY ORCA_TAB_ID ORCA_WORKTREE_ID ORCA_AGENT_LAUNCH_TOKEN ORCA_AGENT_HOOK_ENV ORCA_AGENT_HOOK_VERSION ORCA_AGENT_HOOK_TRANSPORT ORCA_AGENT_HOOK_ENDPOINT ORCA_AGENT_HOOK_PORT ORCA_AGENT_HOOK_TOKEN'
+
+# A path that is safe to type, single-quoted, into the tab's shell.
+typeable() { case "$1" in *[\'\"\\\$\`\!]*|*[[:cntrl:]]*|'') return 1 ;; esac; }
+
+# Passes one event to Orca's Claude hook as if the agent ran in its tab.
+forward() {
+  [ -s "$sd/env" ] || return 0
+  (
+    while IFS='=' read -r k v; do
+      case " $IDENTITY " in *" $k "*) export "$k=$v" ;; esac
+    done < "$sd/env"
+    printf '%s' "$1" | timeout 5 sh "$orca_hook" >/dev/null 2>&1
+  ) || true
+}
+
+orca_up() {
+  [ -n "$(find "$base/.orca-up" -mmin -1 2>/dev/null)" ] && return 0
+  timeout 5 orca status --json 2>/dev/null | jq -e '.result.runtime.reachable == true' >/dev/null 2>&1 || return 1
+  touch "$base/.orca-up"
+}
+
+start() {
+  umask 077
+  mkdir -p "$base" 2>/dev/null || exit 0
+  find "$base" -mindepth 1 -maxdepth 1 -type d -mmin +1440 -exec rm -rf {} + 2>/dev/null
+  mkdir "$sd" 2>/dev/null || exit 0
+  # A setup that does not finish leaves no tab and no state behind.
+  trap '[ -e "$sd/ready" ] || { [ -s "$sd/handle" ] && timeout 5 orca terminal close --terminal "$(cat "$sd/handle")" --tab --json >/dev/null 2>&1; rm -rf "$sd"; }' EXIT
+  orca_up || exit 0
+
+  # The agent's meta file and transcript appear next to the session transcript.
+  local meta='' atp='' label='' model='' root='' w i
+  for i in $(seq 1 25); do
+    meta=$(find "${tp%.jsonl}/subagents" -name "agent-$aid.meta.json" -print -quit 2>/dev/null)
+    [ -n "$meta" ] && break; sleep 0.2
+  done
+  if [ -n "$meta" ]; then
+    label=$(jq -r '.description // ""' "$meta" 2>/dev/null | tr -cd '[:alnum:] :#._/+-' | cut -c1-60)
+    model=$(jq -r '.model // ""' "$meta" 2>/dev/null | tr -cd '[:alnum:]._-' | cut -c1-30)
+    # Devin drivers need no tab (Devin has its own), nor do short bookkeeping steps.
+    skip=${SDD_ORCA_TABS_SKIP-^(devin|ledger):}
+    [ -n "$skip" ] && [[ "$label" =~ $skip ]] && exit 0
+    atp=${meta%.meta.json}.jsonl
+    for i in $(seq 1 25); do [ -s "$atp" ] && break; sleep 0.2; done
+    # sdd-orca workflows name the agent's checkout in the first line of its task.
+    w=$(head -n 1 "$atp" 2>/dev/null | jq -r '.message.content | if type == "string" then . else ([.[]? | .text? // empty] | join(" ")) end' 2>/dev/null \
+      | grep -oE 'Work only in the git checkout at [^ :]+' | head -n 1 | sed 's/.* at //')
+    [ -n "$w" ] && [ -d "$w" ] && root=$(git -C "$w" rev-parse --show-toplevel 2>/dev/null)
+  fi
+  [ -n "$root" ] || root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || exit 0
+  typeable "$here" && typeable "$sd" || exit 0
+
+  local title="sdd ${label:-agent ${aid:0:8}}${model:+ · $model}" out handle
+  printf '%s\n' "$title" > "$sd/title"
+  printf '%s\n' "$atp" > "$sd/transcript"
+  printf '%s\n' "${SDD_ORCA_TAB_LINGER:-120}" > "$sd/linger"
+  tab_create() {
+    timeout 15 orca terminal create --worktree "path:$1" --title "$title" \
+      --command "bash '$here/orca-tab-view' '$sd' && exit" --json 2>/dev/null || true
+  }
+  out=$(tab_create "$root")
+  # Orca knows only the checkouts registered with it or created through it: the tab of a
+  # worktree made with plain git opens under the repository's main checkout.
+  if [ "$(jq -r '.error.code // empty' <<<"$out" 2>/dev/null)" = selector_not_found ]; then
+    w=$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && w=${w%/.git}
+    [ -n "$w" ] && [ "$w" != "$root" ] && out=$(tab_create "$w")
+  fi
+  handle=$(jq -er '.result.terminal.handle // empty' <<<"$out" 2>/dev/null) || exit 0
+  printf '%s\n' "$handle" > "$sd/handle"
+  # The tab writes its pane identity once its shell has started and runs the viewer.
+  for i in $(seq 1 120); do [ -s "$sd/env" ] && break; sleep 0.5; done
+  [ -s "$sd/env" ] || exit 0
+
+  exec 9> "$sd/.lock"; flock -w 10 9
+  forward "$(jq -nc --arg s "$sid" --arg c "$root" --arg t "$atp" --arg m "$model" \
+    '{hook_event_name:"SessionStart", session_id:$s, cwd:$c, transcript_path:$t, source:"startup", model:$m}')"
+  forward "$(jq -nc --arg s "$sid" --arg c "$root" --arg t "$atp" --arg p "${label:-subagent}" \
+    '{hook_event_name:"UserPromptSubmit", session_id:$s, cwd:$c, transcript_path:$t, prompt:$p}')"
+  : > "$sd/ready"
+}
+
+# Later events wait for SubagentStart to finish setting up the tab.
+ready() {
+  local i
+  for i in $(seq 1 150); do
+    [ -d "$sd" ] || return 1
+    [ -e "$sd/ready" ] && break
+    sleep 0.5
+  done
+  [ -e "$sd/ready" ] && [ ! -e "$sd/done" ] || return 1
+  exec 9> "$sd/.lock"; flock -w 10 9
+}
+
+rewrite() {
+  jq -c --arg s "$sid" --arg t "$(cat "$sd/transcript" 2>/dev/null)" \
+    '.session_id = $s | (if $t != "" then .transcript_path = $t else . end) | del(.agent_id, .agent_type, .agent_transcript_path)' <<<"$payload" 2>/dev/null
+}
+
+case "$ev" in
+  SubagentStart) start ;;
+  PreToolUse|PostToolUse|PostToolUseFailure|PermissionRequest)
+    ready || exit 0
+    p=$(rewrite) && forward "$p" ;;
+  SubagentStop)
+    ready || exit 0
+    p=$(rewrite) || exit 0
+    forward "$(jq -c '.hook_event_name = "Stop" | .stop_hook_active = false' <<<"$p")"
+    title=$(cat "$sd/title" 2>/dev/null)
+    timeout 5 orca terminal rename --terminal "$(cat "$sd/handle")" --title "$title ✓" --json >/dev/null 2>&1
+    rm -f "$sd/env"
+    # The viewer prints this line, closes the tab and removes the state directory.
+    msg=$(jq -r '.last_assistant_message // ""' <<<"$payload" | tr -d '\000-\010\013-\037\177')
+    line=$(grep -E 'STATUS:' <<<"$msg" | tail -n 1)
+    [ -n "$line" ] || line=$(grep -v '^[[:space:]]*$' <<<"$msg" | tail -n 1)
+    printf '%s\n' "${line:0:200}" > "$sd/done.tmp" && mv "$sd/done.tmp" "$sd/done" ;;
+esac
+exit 0

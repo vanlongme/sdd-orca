@@ -144,7 +144,8 @@ case "$1 $2" in
   "repo add") opt --path "$@" >> "$d/known"; echo '{"ok":true}' ;;
   "terminal create")
     wt=$(opt --worktree "$@"); wt=${wt#path:}
-    if ! grep -qxF "$wt" "$d/known" 2>/dev/null && ! grep -qxF "$(git -C "$wt" rev-parse --path-format=absolute --git-common-dir 2>/dev/null | sed 's|/\.git$||')" "$d/known" 2>/dev/null; then
+    # Like Orca: only registered checkouts are known, never git worktrees made outside Orca.
+    if ! grep -qxF "$wt" "$d/known" 2>/dev/null; then
       echo '{"ok":false,"error":{"code":"selector_not_found"}}'; exit 1; fi
     h=term_fake$(ls "$d" | grep -c '\.cmd$')
     opt --command "$@" > "$d/$h.cmd"; opt --title "$@" > "$d/$h.title"
@@ -197,6 +198,16 @@ res=$("$SD" wait "$job" 1)
 check "a busy Devin is RUNNING, not nudged" test "$(contains "$res" RUNNING && echo y)" = y -a ! -f "$FAKE_ORCA_DIR/nudged"
 "$SD" stop "$job" >/dev/null; sleep 1
 check "stop ends a Devin running in an Orca tab" bash -c '! kill -0 "$(cat "$1")" 2>/dev/null' _ "$FAKE_ARGS.pid"
+
+reset_orca
+wt="$tmp/wt"; git -C "$repo" worktree add -q "$wt" -b wt-probe
+wws="$wt/.superpowers/sdd/plan"; mkdir -p "$wws"; cp "$ws/task-1-brief.md" "$ws/constraints.md" "$wws/"
+out=$(cd "$wt" && FAKE_MODE=tui-done "$SD" start --task 1 --brief "$wws/task-1-brief.md" --report "$wws/task-1-report.md" --constraints "$wws/constraints.md" --workspace "$wws" 2>&1)
+job=$(job_of "$out")
+check "a worktree Orca does not manage gets its tab under the main checkout" grep -q -- "terminal create --worktree path:$repo " "$FAKE_ORCA_DIR/calls"
+check "start still reports the tab to watch" contains "$out" "WATCH=orca terminal"
+res=$("$SD" wait "$job" 30)
+check "devin works in the worktree itself" test "$(cat "$FAKE_ARGS.cwd")" = "$wt" -a "$(contains "$res" "EXIT 0" && echo y)" = y
 
 reset_orca; touch "$FAKE_ORCA_DIR/down"
 out=$(cd "$repo" && FAKE_MODE=done "$SD" start "${base[@]}")

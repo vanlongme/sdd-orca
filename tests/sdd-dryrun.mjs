@@ -45,7 +45,7 @@ const done = () => ({ status: 'DONE', commits: 1, tests: 'ok' })
     if (l.startsWith('ledger:')) return { appended: true }
   })
   const m = Object.fromEntries(r.calls.map(c => [c.label, c.model]))
-  check('happy path', r.out.completed === 3 && m['impl:1'] === 'haiku' && m['impl:2'] === 'sonnet' && m['impl:3'] === 'sonnet' && r.calls.find(c => c.label === 'impl:3').effort === 'high' && r.calls.find(c => c.label === 'impl:2').effort === 'medium' && m['review:3'] === 'opus' && m['review:1'] === 'sonnet' && m['fix:1#1'] === 'haiku' && r.out.verify?.passed && r.out.final.ready && r.out.deferredMinors === 1 && r.calls.some(c => c.label === 'gaps:3') && r.out.rulings.length === 1 && !r.badPhase.length, r)
+  check('happy path', r.out.completed === 3 && m['impl:1'] === 'haiku' && m['impl:2'] === 'sonnet' && m['impl:3'] === 'opus' && r.calls.find(c => c.label === 'impl:3').effort === 'high' && r.calls.find(c => c.label === 'impl:2').effort === 'medium' && m['review:3'] === 'opus' && r.calls.find(c => c.label === 'review:3').effort === 'xhigh' && m['review:1'] === 'sonnet' && r.calls.find(c => c.label === 'review:1').effort === 'medium' && m['fix:1#1'] === 'haiku' && r.out.verify?.passed && r.out.final.ready && r.out.deferredMinors === 1 && r.calls.some(c => c.label === 'gaps:3') && r.out.rulings.length === 1 && !r.badPhase.length, r)
 }
 // 2. NEEDS_CONTEXT answered, then escalated BLOCKED
 {
@@ -91,7 +91,7 @@ const done = () => ({ status: 'DONE', commits: 1, tests: 'ok' })
   const m = Object.fromEntries(r.calls.map(c => [c.label, c.model]))
   check('cap -> escalate -> breaker park', r.out.completed === 1 && r.out.results[0].fixRounds === 3 && r.out.results[0].parked === 1 && m['fix:1#2'] === 'haiku' && m['fix:1#3'] === 'sonnet' && r.out.deferredMinors === 3, r)
 }
-// 4b. a design task fixes on sonnet at high effort; only the last round goes to opus
+// 4b. a design task implements and fixes on opus at high effort; its review runs on opus at xhigh
 {
   const r = await run({ plan: 'p.md' }, (l) => {
     if (l === 'preflight') return pre([[1, 'design']])
@@ -103,9 +103,9 @@ const done = () => ({ status: 'DONE', commits: 1, tests: 'ok' })
     return { appended: true }
   })
   const c = l => r.calls.find(x => x.label === l) || {}
-  check('design tier: sonnet high, last fix round opus', c('impl:1').model === 'sonnet' && c('impl:1').effort === 'high' &&
-    c('fix:1#1').model === 'sonnet' && c('fix:1#1').effort === 'high' && c('fix:1#2').model === 'sonnet' &&
-    c('fix:1#3').model === 'opus' && c('review:1').model === 'opus', r)
+  check('design tier: opus high, review opus xhigh', c('impl:1').model === 'opus' && c('impl:1').effort === 'high' &&
+    c('fix:1#1').model === 'opus' && c('fix:1#1').effort === 'high' && c('fix:1#2').model === 'opus' &&
+    c('fix:1#3').model === 'opus' && c('review:1').model === 'opus' && c('review:1').effort === 'xhigh', r)
 }
 // 5. breaker carry + stop
 {
@@ -247,13 +247,13 @@ const done = () => ({ status: 'DONE', commits: 1, tests: 'ok' })
   const ctx = c('devin:1:impl2')?.prompt || ''
   const fix1 = c('devin:2:fix1')?.prompt || ''
   check('devin implementer routing', r.out.completed === 3 &&
-    m['devin:1:impl'] === 'haiku' && m['devin:2:impl'] === 'haiku' && m['impl:3'] === 'sonnet' &&
+    m['devin:1:impl'] === 'haiku' && m['devin:2:impl'] === 'haiku' && m['impl:3'] === 'opus' &&
     !c('impl:1') && !c('impl:2') && !r.calls.some(x => x.label.startsWith('devin:3')) &&
     m['devin:2:fix1'] === 'haiku' && m['devin:2:fix2'] === 'haiku' && m['fix:2#3'] === 'opus' && !c('devin:2:fix3') &&
     c('devin:1:impl').prompt.includes('sdd-devin start --task 1 --brief /r/.superpowers/sdd/p/task-1-brief.md --report /r/.superpowers/sdd/p/task-1-report.md --constraints /r/.superpowers/sdd/p/constraints.md --workspace /r/.superpowers/sdd/p`') &&
     ctx.includes('--context /r/.superpowers/sdd/p/task-1-impl2-context.md') && ctx.includes('use 8080 exactly') &&
     fix1.includes('--findings /r/.superpowers/sdd/p/task-2-fix1-findings.md') && fix1.includes('x:1') &&
-    c('review:1').model === 'sonnet' && r.out.results.map(x => x.implementer).join() === 'devin,devin,sonnet' &&
+    c('review:1').model === 'sonnet' && r.out.results.map(x => x.implementer).join() === 'devin,devin,opus' &&
     r.out.results[1].parked === 1, r)
 }
 // 15. Devin implementer: a task the resolver escalates goes to a stronger Claude model, not back to Devin

@@ -79,7 +79,7 @@ This happens, for example, inside a subagent or with workflows disabled. Read `$
 | `spec` | named in plan | binding authority for rulings |
 | `verify` | none | runs exactly once after the final review |
 | `implementer` | `claude` | `devin` hands transcribe/integrate tasks to the Devin CLI |
-| `implModel` | `auto` | Claude implementer model; `auto` picks by task tier: transcribe = haiku, integrate = sonnet, design = sonnet at high effort; escalations and the last fix round go one tier up (opus at most) |
+| `implModel` | `auto` | Claude implementer model; `auto` picks by task tier: transcribe = haiku, integrate = sonnet, design = opus at high effort (its review runs on opus at xhigh); escalations and the last fix round go one tier up |
 | `maxFixRounds` | 3 | 1–5; the last round goes to a fresh Claude implementer one tier up |
 | `only` / `from` | — | task numbers |
 | `sddDir` | auto-detected | this skill's directory (scripts + templates) |
